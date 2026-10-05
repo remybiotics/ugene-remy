@@ -149,6 +149,8 @@ protected:
 
     qint64 getPageStep() const override;
 
+    void wheelEvent(QWheelEvent* we) override;
+
     void onVisibleRangeChanged(bool signal = true) override;
 
     void pack() override;
@@ -201,6 +203,9 @@ public:
 private:
     U2Region getRegionToZoom() const;
 
+    /** Zooms one step, keeping the sequence position under pointerX on screen. */
+    void zoomAtPointer(bool zoomIn, int pointerX);
+
 public:
     U2Region frameRange;
     int minNuclsPerScreen;
@@ -219,6 +224,10 @@ public:
     PanViewLinesSettings* settings;
 
     int zoomUsing;
+
+    // Partial wheel rotation carried until it reaches one 15-degree notch.
+    int wheelZoomAngleAccum = 0;
+    int wheelScrollAngleAccum = 0;
 };
 
 class U2VIEW_EXPORT PanViewRenderArea : public GSequenceLineViewGridAnnotationRenderArea {

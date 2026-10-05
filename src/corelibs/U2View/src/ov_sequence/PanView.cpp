@@ -147,6 +147,8 @@ PanView::PanView(QWidget* p, SequenceObjectContext* ctx, const PanViewRenderArea
     minNuclsPerScreen = qMin(seqLen, qint64(0));
 
     zoomUsing = 0;
+    wheelZoomAngleAccum = 0;
+    wheelScrollAngleAccum = 0;
 
     zoomInAction = new QAction(tr("Zoom In"), this);
     GUIUtils::setThemedIcon(zoomInAction, ":/core/images/zoom_in.png");
@@ -375,6 +377,102 @@ void PanView::updateActions() {
         zoomToSelectionAction->setEnabled(false);
     }
     zoomToSequenceAction->setEnabled(visibleRange.startPos != 0 || visibleRange.endPos() != seqLen);
+}
+
+namespace {
+
+constexpr int WHEEL_ANGLE_PER_STEP = 120;
+
+// angleDelta is eighths of a degree (120 per notch). pixelDelta is points.
+// On macOS a sideways mouse wheel can report a non-negative NSEvent.deltaX, which Qt
+// copies into angleDelta().x(), while pixelDelta().x() still carries the direction.
+int wheelAxisDelta(int angleComponent, int pixelComponent) {
+    if (angleComponent == 0) {
+        // Qt maps one precise scrolling pixel to two angle units.
+        return pixelComponent * 2;
+    }
+    if (pixelComponent != 0 && ((pixelComponent > 0) != (angleComponent > 0))) {
+        return pixelComponent > 0 ? qAbs(angleComponent) : -qAbs(angleComponent);
+    }
+    return angleComponent;
+}
+
+int takeWheelSteps(int delta, int& accumulated) {
+    if (delta == 0) {
+        return 0;
+    }
+    if ((accumulated > 0 && delta < 0) || (accumulated < 0 && delta > 0)) {
+        accumulated = 0;
+    }
+    accumulated += delta;
+    const int steps = accumulated / WHEEL_ANGLE_PER_STEP;
+    accumulated -= steps * WHEEL_ANGLE_PER_STEP;
+    return steps;
+}
+
+}  // namespace
+
+void PanView::wheelEvent(QWheelEvent* we) {
+    const bool renderAreaWheel = QRect(renderArea->x(), renderArea->y(), renderArea->width(), renderArea->height()).contains(we->position().toPoint());
+    if (!renderAreaWheel) {
+        QWidget::wheelEvent(we);
+        return;
+    }
+    setFocus();
+
+    if (we->phase() == Qt::ScrollBegin || we->phase() == Qt::ScrollEnd) {
+        wheelZoomAngleAccum = 0;
+        wheelScrollAngleAccum = 0;
+    }
+
+    const QPoint angle = we->angleDelta();
+    const QPoint pixel = we->pixelDelta();
+    const int verticalDelta = wheelAxisDelta(angle.y(), pixel.y());
+    const int horizontalDelta = wheelAxisDelta(angle.x(), pixel.x());
+
+    // A vertical wheel zooms around the pointer. A horizontal wheel pans. The larger axis wins when a device reports both.
+    if (verticalDelta != 0 && qAbs(verticalDelta) >= qAbs(horizontalDelta)) {
+        const int pointerX = toRenderAreaPoint(we->position().toPoint()).x();
+        const int steps = takeWheelSteps(verticalDelta, wheelZoomAngleAccum);
+        if (steps > 0) {
+            for (int i = 0; i < steps && zoomInAction->isEnabled(); ++i) {
+                zoomAtPointer(true, pointerX);
+            }
+        } else if (steps < 0) {
+            for (int i = 0; i < -steps && zoomOutAction->isEnabled(); ++i) {
+                zoomAtPointer(false, pointerX);
+            }
+        }
+    } else if (horizontalDelta != 0) {
+        const int steps = takeWheelSteps(horizontalDelta, wheelScrollAngleAccum);
+        // Positive x is a leftward turn (Qt: the top of the wheel moved left).
+        const auto action = steps > 0 ? QAbstractSlider::SliderSingleStepSub : QAbstractSlider::SliderSingleStepAdd;
+        for (int i = 0; i < qAbs(steps); ++i) {
+            scrollBar->triggerAction(action);
+        }
+    }
+    we->accept();
+}
+
+void PanView::zoomAtPointer(bool zoomIn, int pointerX) {
+    const int width = renderArea->width();
+    CHECK(width > 0, );
+
+    qint64 newLength = visibleRange.length;
+    if (zoomIn) {
+        CHECK(visibleRange.length > minNuclsPerScreen, );
+        newLength = qMax((visibleRange.length + 1) / 2, (qint64)minNuclsPerScreen);
+    } else {
+        CHECK(visibleRange.length < seqLen, );
+        newLength = qMin(visibleRange.length * 2, seqLen);
+    }
+    CHECK(newLength != visibleRange.length, );
+
+    // Keep the sequence coordinate under the pointer at the same screen x.
+    const double fraction = qBound(0.0, double(pointerX) / double(width), 1.0);
+    const double anchorPos = double(visibleRange.startPos) + fraction * double(visibleRange.length);
+    const qint64 newStart = qBound(qint64(0), qRound64(anchorPos - fraction * double(newLength)), seqLen - newLength);
+    setVisibleRange(U2Region(newStart, newLength));
 }
 
 void PanView::sl_zoomInAction() {
