@@ -430,17 +430,16 @@ void PanView::wheelEvent(QWheelEvent* we) {
     const int verticalDelta = wheelAxisDelta(angle.y(), pixel.y());
     const int horizontalDelta = wheelAxisDelta(angle.x(), pixel.x());
 
-    // A vertical wheel zooms around the pointer. A horizontal wheel pans. The larger axis wins when a device reports both.
+    // A vertical wheel zooms. A horizontal wheel pans. The larger axis wins when a device reports both.
     if (verticalDelta != 0 && qAbs(verticalDelta) >= qAbs(horizontalDelta)) {
-        const int pointerX = toRenderAreaPoint(we->position().toPoint()).x();
         const int steps = takeWheelSteps(verticalDelta, wheelZoomAngleAccum);
         if (steps > 0) {
             for (int i = 0; i < steps && zoomInAction->isEnabled(); ++i) {
-                zoomAtPointer(true, pointerX);
+                zoomInAction->trigger();
             }
         } else if (steps < 0) {
             for (int i = 0; i < -steps && zoomOutAction->isEnabled(); ++i) {
-                zoomAtPointer(false, pointerX);
+                zoomOutAction->trigger();
             }
         }
     } else if (horizontalDelta != 0) {
@@ -454,25 +453,44 @@ void PanView::wheelEvent(QWheelEvent* we) {
     we->accept();
 }
 
-void PanView::zoomAtPointer(bool zoomIn, int pointerX) {
-    const int width = renderArea->width();
-    CHECK(width > 0, );
+void PanView::mousePressEvent(QMouseEvent* me) {
+    // Shift-click on a second element selects every base from the earlier element through the later one.
+    // The shared click handler runs first and, on Shift, leaves the sequence selection empty.
+    const bool shiftClick = me->button() == Qt::LeftButton && me->modifiers().testFlag(Qt::ShiftModifier) && !me->modifiers().testFlag(Qt::AltModifier);
+    const QList<Annotation*> previouslySelected = shiftClick ? ctx->getAnnotationsSelection()->getAnnotations() : QList<Annotation*>();
 
-    qint64 newLength = visibleRange.length;
-    if (zoomIn) {
-        CHECK(visibleRange.length > minNuclsPerScreen, );
-        newLength = qMax((visibleRange.length + 1) / 2, (qint64)minNuclsPerScreen);
-    } else {
-        CHECK(visibleRange.length < seqLen, );
-        newLength = qMin(visibleRange.length * 2, seqLen);
+    GSequenceLineViewAnnotated::mousePressEvent(me);
+
+    if (!shiftClick || previouslySelected.isEmpty()) {
+        return;
     }
-    CHECK(newLength != visibleRange.length, );
 
-    // Keep the sequence coordinate under the pointer at the same screen x.
-    const double fraction = qBound(0.0, double(pointerX) / double(width), 1.0);
-    const double anchorPos = double(visibleRange.startPos) + fraction * double(visibleRange.length);
-    const qint64 newStart = qBound(qint64(0), qRound64(anchorPos - fraction * double(newLength)), seqLen - newLength);
-    setVisibleRange(U2Region(newStart, newLength));
+    const QList<Annotation*> nowSelected = ctx->getAnnotationsSelection()->getAnnotations();
+    bool addedAnnotation = false;
+    for (Annotation* annotation : qAsConst(nowSelected)) {
+        if (!previouslySelected.contains(annotation)) {
+            addedAnnotation = true;
+            break;
+        }
+    }
+    if (!addedAnnotation) {
+        return;
+    }
+
+    QVector<U2Region> regions;
+    for (const Annotation* annotation : qAsConst(nowSelected)) {
+        for (const U2Region& region : annotation->getRegions()) {
+            if (!region.isEmpty()) {
+                regions.append(region);
+            }
+        }
+    }
+    CHECK(!regions.isEmpty(), );
+
+    ctx->getSequenceSelection()->setSelectedRegions({U2Region::containingRegion(regions)});
+    // A mouse move after this press would replace the span with a drag selection.
+    lastPressPos = -1;
+    cancelSelectionResizing();
 }
 
 void PanView::sl_zoomInAction() {

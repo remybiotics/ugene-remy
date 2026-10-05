@@ -151,6 +151,8 @@ protected:
 
     void wheelEvent(QWheelEvent* we) override;
 
+    void mousePressEvent(QMouseEvent* me) override;
+
     void onVisibleRangeChanged(bool signal = true) override;
 
     void pack() override;
@@ -202,9 +204,6 @@ public:
 
 private:
     U2Region getRegionToZoom() const;
-
-    /** Zooms one step, keeping the sequence position under pointerX on screen. */
-    void zoomAtPointer(bool zoomIn, int pointerX);
 
 public:
     U2Region frameRange;
