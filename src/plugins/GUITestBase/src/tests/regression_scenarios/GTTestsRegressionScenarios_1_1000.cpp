@@ -1821,15 +1821,19 @@ GUI_TEST_CLASS_DEFINITION(test_0835) {
                   "Restriction map widget isn't visible unexpectedly");
 
     // 4. Delete the sequence with the Circular View from the Project View.
-    //  = > The sequence has been deleted, the Circular View is not shown.
-    //!= > The Restriction Site Map is NOT still shown.
+    // Expected: that sequence and its circular view are gone.
+    // The Restriction Sites Map is a full-height options-panel tab, so it may stay open for the remaining sequence.
     GTUtilsProjectTreeView::click("sars.gb");
     GTKeyboardDriver::keyClick(Qt::Key_Delete);
     GTUtilsTaskTreeView::waitTaskFinished();
     GTThread::waitForMainThread();
 
+    CHECK_SET_ERR(GTWidget::findWidget("CV_ADV_single_sequence_widget_0", nullptr, {false}) == nullptr, "Circular view is still shown");
+    CHECK_SET_ERR(GTWidget::findWidget("CV_ADV_single_sequence_widget_1", nullptr, {false}) == nullptr, "Circular view is still shown");
     restrictionMapTreeWidget = GTWidget::findWidget("restrictionMapTreeWidget", nullptr, {false});
-    CHECK_SET_ERR(restrictionMapTreeWidget == nullptr, "Restriction map widget is visible unexpectedly");
+    if (restrictionMapTreeWidget != nullptr) {
+        CHECK_SET_ERR(restrictionMapTreeWidget->isVisible(), "Restriction map tab is open but not visible");
+    }
 }
 
 GUI_TEST_CLASS_DEFINITION(test_0839) {

@@ -57,8 +57,15 @@ public:
     /** Opens a group with the specified group id. */
     void openGroupById(const QString& groupId, const QVariantMap& options = QVariantMap());
 
+    /** Closes a group with the specified group id and collapses the panel when it was showing. */
+    void closeGroupById(const QString& groupId);
+
     /** Returns id for currently opened tab. **/
     const QString& getActiveGroupId() const;
+
+signals:
+    /** Emitted when the opened tab changes. Empty when every tab is closed. */
+    void si_activeGroupChanged(const QString& groupId);
 
 public slots:
     /** Catches signals that a group header has been pressed

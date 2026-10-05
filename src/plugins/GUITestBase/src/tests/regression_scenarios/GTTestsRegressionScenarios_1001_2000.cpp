@@ -4482,7 +4482,7 @@ GUI_TEST_CLASS_DEFINITION(test_1463) {
     // Expected state: additional widget with circular view had opened.
     GTWidget::click(GTWidget::findWidget("CircularViewAction"));
 
-    // 5. Look at the "Restrictions Sites Map" widget to the right of the circular view.
+    // 5. Look at the Restriction Sites Map tab. It fills the options panel, beside the sequence view.
     auto tree = dynamic_cast<QTreeWidget*>(GTWidget::findWidget("restrictionMapTreeWidget"));
 
     // Expected state: enzymes in this widget are ordered alphabetically.

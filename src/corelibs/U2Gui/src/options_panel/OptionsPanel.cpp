@@ -81,6 +81,15 @@ const QString& OptionsPanelController::getActiveGroupId() const {
     return activeGroupId;
 }
 
+void OptionsPanelController::closeGroupById(const QString& groupId) {
+    CHECK(!groupId.isEmpty(), );
+    CHECK(activeGroupId == groupId, );
+    if (widget != nullptr && widget->getState() != OPMainWidgetState_Closed) {
+        widget->closeOptionsPanel();
+    }
+    closeOptionsGroup(groupId);
+}
+
 void OptionsPanelController::sl_groupHeaderPressed(const QString& groupId) {
     OPWidgetFactory* opWidgetFactory = findFactoryByGroupId(groupId);
     SAFE_POINT(opWidgetFactory != nullptr,
@@ -98,8 +107,7 @@ void OptionsPanelController::sl_groupHeaderPressed(const QString& groupId) {
 
     // The already opened group is the currently selected one
     if (activeGroupId == groupId) {
-        widget->closeOptionsPanel();
-        closeOptionsGroup(groupId);
+        closeGroupById(groupId);
         return;
     } else {  // Another group has been selected
         closeOptionsGroup(activeGroupId);
@@ -147,6 +155,7 @@ void OptionsPanelController::openOptionsGroup(const QString& groupId, const QVar
     // Re-apply options in case if they were overridden by SavableTab.
     opWidgetFactory->applyOptionsToWidget(mainWidget, options);
     activeGroupId = groupId;
+    emit si_activeGroupChanged(activeGroupId);
 }
 
 void OptionsPanelController::closeOptionsGroup(const QString& groupId) {
@@ -160,6 +169,7 @@ void OptionsPanelController::closeOptionsGroup(const QString& groupId) {
     widget->deleteOptionsWidget(groupId);
     headerWidget->setHeaderDeselected();
     activeGroupId = "";
+    emit si_activeGroupChanged(activeGroupId);
 }
 
 OPWidgetFactory* OptionsPanelController::findFactoryByGroupId(const QString& groupId) {

@@ -21,6 +21,7 @@
 
 #include "RestrictionMapWidget.h"
 
+#include <QSizePolicy>
 #include <QVBoxLayout>
 
 #include <U2Algorithm/EnzymeModel.h>
@@ -31,6 +32,7 @@
 #include <U2Core/AnnotationTableObject.h>
 #include <U2Core/AppContext.h>
 #include <U2Core/AutoAnnotationsSupport.h>
+#include <U2Core/DNAAlphabet.h>
 #include <U2Core/DNASequenceSelection.h>
 #include <U2Core/Settings.h>
 #include <U2Core/U1AnnotationUtils.h>
@@ -38,6 +40,7 @@
 #include <U2Gui/GUIUtils.h>
 
 #include <U2View/ADVSequenceObjectContext.h>
+#include <U2View/AnnotatedDNAView.h>
 
 #define ENZYME_FOLDER_ITEM_TYPE 1022
 #define ENZYME_ITEM_TYPE 1023
@@ -89,22 +92,110 @@ void EnzymeFolderItem::removeEnzymeItem(Annotation* enzAnn) {
 /// RestrictionMapWidget
 
 RestrctionMapWidget::RestrctionMapWidget(ADVSequenceObjectContext* context, QWidget* p)
-    : QWidget(p), ctx(context) {
+    : QWidget(p), ctx(nullptr), annotatedDnaView(nullptr), treeWidget(nullptr) {
     assert(context != nullptr);
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    annotatedDnaView = context->getAnnotatedDNAView();
+
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
     treeWidget = new QTreeWidget(this);
     treeWidget->setObjectName("restrictionMapTreeWidget");
+    treeWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     treeWidget->setColumnCount(1);
     treeWidget->setHeaderLabel(tr("Restriction Sites Map"));
     connect(treeWidget, SIGNAL(itemSelectionChanged()), SLOT(sl_itemSelectionChanged()));
 
-    layout->addWidget(treeWidget);
+    layout->addWidget(treeWidget, 1);
 
+    connect(annotatedDnaView, SIGNAL(si_activeSequenceWidgetChanged(ADVSequenceWidget*, ADVSequenceWidget*)), SLOT(sl_onActiveSequenceChanged()));
+    connect(annotatedDnaView, SIGNAL(si_sequenceRemoved(ADVSequenceObjectContext*)), SLOT(sl_onSequenceRemoved(ADVSequenceObjectContext*)));
+    setSequenceContext(context);
+}
+
+void RestrctionMapWidget::setSequenceContext(ADVSequenceObjectContext* sequenceContext) {
+    if (ctx == sequenceContext) {
+        return;
+    }
+    unregisterAnnotationObjects();
+    ctx = sequenceContext;
+    if (ctx == nullptr) {
+        treeWidget->clear();
+        return;
+    }
+    connect(ctx, SIGNAL(si_annotationObjectAdded(AnnotationTableObject*)), SLOT(sl_onAnnotationObjectAdded(AnnotationTableObject*)));
+    connect(ctx, SIGNAL(si_annotationObjectRemoved(AnnotationTableObject*)), SLOT(sl_onAnnotationObjectRemoved(AnnotationTableObject*)));
     registerAnnotationObjects();
+    rebuildTree();
+}
+
+void RestrctionMapWidget::unregisterAnnotationObjects() {
+    if (ctx == nullptr) {
+        return;
+    }
+    QSet<AnnotationTableObject*> annotationObjects = ctx->getAnnotationObjects(true);
+    foreach (AnnotationTableObject* annotationObject, annotationObjects) {
+        annotationObject->disconnect(this);
+    }
+    ctx->disconnect(this);
+}
+
+void RestrctionMapWidget::connectAnnotationObject(AnnotationTableObject* object) {
+    connect(object, SIGNAL(si_onAnnotationsAdded(const QList<Annotation*>&)), SLOT(sl_onAnnotationsAdded(const QList<Annotation*>&)));
+    connect(object, SIGNAL(si_onAnnotationsRemoved(const QList<Annotation*>&)), SLOT(sl_onAnnotationsRemoved(const QList<Annotation*>&)));
+    connect(object, SIGNAL(si_onAnnotationsInGroupRemoved(const QList<Annotation*>&, AnnotationGroup*)), SLOT(sl_onAnnotationsInGroupRemoved(const QList<Annotation*>&, AnnotationGroup*)));
+    connect(object, SIGNAL(si_onGroupCreated(AnnotationGroup*)), SLOT(sl_onAnnotationsGroupCreated(AnnotationGroup*)));
+}
+
+void RestrctionMapWidget::rebuildTree() {
+    treeWidget->blockSignals(true);
     updateTreeWidget();
     initTreeWidget();
+    treeWidget->blockSignals(false);
+}
+
+void RestrctionMapWidget::sl_onActiveSequenceChanged() {
+    ADVSequenceObjectContext* activeContext = annotatedDnaView->getActiveSequenceContext();
+    if (activeContext == nullptr || activeContext == ctx) {
+        return;
+    }
+    const DNAAlphabet* alphabet = activeContext->getAlphabet();
+    if (alphabet == nullptr || !alphabet->isNucleic()) {
+        return;
+    }
+    setSequenceContext(activeContext);
+}
+
+void RestrctionMapWidget::sl_onSequenceRemoved(ADVSequenceObjectContext* sequenceContext) {
+    if (sequenceContext != ctx) {
+        return;
+    }
+    ADVSequenceObjectContext* replacement = nullptr;
+    const QList<ADVSequenceObjectContext*> contexts = annotatedDnaView->getSequenceContexts();
+    foreach (ADVSequenceObjectContext* candidate, contexts) {
+        if (candidate == sequenceContext) {
+            continue;
+        }
+        const DNAAlphabet* alphabet = candidate->getAlphabet();
+        if (alphabet != nullptr && alphabet->isNucleic()) {
+            replacement = candidate;
+            break;
+        }
+    }
+    setSequenceContext(replacement);
+}
+
+void RestrctionMapWidget::sl_onAnnotationObjectAdded(AnnotationTableObject* object) {
+    connectAnnotationObject(object);
+    sl_onAnnotationsAdded(object->getAnnotations());
+}
+
+void RestrctionMapWidget::sl_onAnnotationObjectRemoved(AnnotationTableObject* object) {
+    object->disconnect(this);
+    if (ctx != nullptr) {
+        rebuildTree();
+    }
 }
 
 void RestrctionMapWidget::updateTreeWidget() {
@@ -128,11 +219,8 @@ void RestrctionMapWidget::updateTreeWidget() {
 
 void RestrctionMapWidget::registerAnnotationObjects() {
     QSet<AnnotationTableObject*> aObjs = ctx->getAnnotationObjects(true);
-    foreach (const AnnotationTableObject* ao, aObjs) {
-        connect(ao, SIGNAL(si_onAnnotationsAdded(const QList<Annotation*>&)), SLOT(sl_onAnnotationsAdded(const QList<Annotation*>&)));
-        connect(ao, SIGNAL(si_onAnnotationsRemoved(const QList<Annotation*>&)), SLOT(sl_onAnnotationsRemoved(const QList<Annotation*>&)));
-        connect(ao, SIGNAL(si_onAnnotationsInGroupRemoved(const QList<Annotation*>&, AnnotationGroup*)), SLOT(sl_onAnnotationsInGroupRemoved(const QList<Annotation*>&, AnnotationGroup*)));
-        connect(ao, SIGNAL(si_onGroupCreated(AnnotationGroup*)), SLOT(sl_onAnnotationsGroupCreated(AnnotationGroup*)));
+    foreach (AnnotationTableObject* ao, aObjs) {
+        connectAnnotationObject(ao);
     }
 }
 
@@ -151,6 +239,9 @@ void RestrctionMapWidget::sl_onAnnotationsAdded(const QList<Annotation*>& anns) 
 }
 
 void RestrctionMapWidget::sl_onAnnotationsRemoved(const QList<Annotation*>& anns) {
+    if (ctx == nullptr) {
+        return;
+    }
     foreach (Annotation* a, anns) {
         EnzymeFolderItem* folderItem = findEnzymeFolderByName(a->getName());
         if (folderItem) {
@@ -176,6 +267,9 @@ EnzymeFolderItem* RestrctionMapWidget::findEnzymeFolderByName(const QString& enz
 }
 
 void RestrctionMapWidget::sl_itemSelectionChanged() {
+    if (ctx == nullptr) {
+        return;
+    }
     Annotation* selectedAnnotation = nullptr;
     const QList<QTreeWidgetItem*> selected = treeWidget->selectedItems();
     foreach (QTreeWidgetItem* item, selected) {
@@ -221,6 +315,9 @@ void RestrctionMapWidget::initTreeWidget() {
 }
 
 void RestrctionMapWidget::sl_onAnnotationsInGroupRemoved(const QList<Annotation*>& anns, AnnotationGroup* group) {
+    if (ctx == nullptr) {
+        return;
+    }
     if (group->getName() == ANNOTATION_GROUP_ENZYME) {
         foreach (Annotation* a, anns) {
             EnzymeFolderItem* folderItem = findEnzymeFolderByName(a->getName());

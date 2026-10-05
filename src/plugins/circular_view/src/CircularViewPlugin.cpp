@@ -30,6 +30,7 @@
 
 #include <U2Gui/GUIUtils.h>
 #include <U2Gui/OPWidgetFactoryRegistry.h>
+#include <U2Gui/OptionsPanel.h>
 
 #include <U2View/ADVConstants.h>
 #include <U2View/ADVSequenceObjectContext.h>
@@ -40,7 +41,7 @@
 #include "CircularViewPlugin.h"
 #include "CircularViewSettingsWidgetFactory.h"
 #include "CircularViewSplitter.h"
-#include "RestrictionMapWidget.h"
+#include "RestrictionMapWidgetFactory.h"
 #include "SetSequenceOriginDialog.h"
 #include "ShiftSequenceStartTask.h"
 
@@ -78,6 +79,7 @@ CircularViewPlugin::CircularViewPlugin()
     OPWidgetFactoryRegistry* opWidgetFactoryRegistry = AppContext::getOPWidgetFactoryRegistry();
     SAFE_POINT(opWidgetFactoryRegistry != nullptr, "OPWidgetFactoryRegistry is NULL", );
     opWidgetFactoryRegistry->registerFactory(new CircularViewSettingsWidgetFactory(qobject_cast<CircularViewContext*>(viewCtx)));
+    opWidgetFactoryRegistry->registerFactory(new RestrictionMapWidgetFactory());
 }
 
 #define CIRCULAR_ACTION_NAME "CircularViewAction"
@@ -162,9 +164,9 @@ void CircularViewContext::sl_sequenceWidgetRemoved(ADVSequenceWidget* w) {
         auto a = qobject_cast<CircularViewAction*>(sw->getADVSequenceWidgetAction(CIRCULAR_ACTION_NAME));
         SAFE_POINT(a != nullptr, "Circular view action is not found", );
         CHECK(a->view != nullptr, );
-        splitter->removeView(a->view, a->rmapWidget);
+        splitter->removeView(a->view);
         delete a->view;
-        delete a->rmapWidget;
+        a->view = nullptr;
         if (splitter->isEmpty()) {
             removeCircularView(sw->getAnnotatedDNAView());
         }
@@ -272,21 +274,26 @@ void CircularViewContext::sl_showCircular() {
     if (a->isChecked()) {
         a->setText(tr("Remove circular view"));
         assert(a->view == nullptr);
-        CircularViewSplitter* splitter = getView(sw->getAnnotatedDNAView(), true);
-        a->view = new CircularView(sw, sw->getSequenceContext(), viewSettings.value(sw->getAnnotatedDNAView()));
+        AnnotatedDNAView* annotatedDnaView = sw->getAnnotatedDNAView();
+        // The first circular view in this window opens the full-height restriction map tab.
+        // Later views leave that tab as the user left it, including open while circular view is off.
+        const bool firstCircularView = getView(annotatedDnaView, false) == nullptr;
+        CircularViewSplitter* splitter = getView(annotatedDnaView, true);
+        a->view = new CircularView(sw, sw->getSequenceContext(), viewSettings.value(annotatedDnaView));
         a->view->setObjectName("CV_" + sw->objectName());
-        a->rmapWidget = new RestrctionMapWidget(sw->getSequenceContext(), splitter);
-        splitter->addView(a->view, a->rmapWidget);
-        sw->getAnnotatedDNAView()->insertWidgetIntoSplitter(splitter);
+        splitter->addView(a->view);
+        annotatedDnaView->insertWidgetIntoSplitter(splitter);
         splitter->adaptSize();
+        if (firstCircularView) {
+            annotatedDnaView->getOptionsPanelController()->openGroupById(RestrictionMapWidgetFactory::getGroupId());
+        }
     } else {
         a->setText(tr("Show circular view"));
         assert(a->view != nullptr);
         CircularViewSplitter* splitter = getView(sw->getAnnotatedDNAView(), false);
         if (splitter != nullptr) {
-            splitter->removeView(a->view, a->rmapWidget);
+            splitter->removeView(a->view);
             delete a->view;
-            delete a->rmapWidget;
             if (splitter->isEmpty()) {
                 removeCircularView(sw->getAnnotatedDNAView());
             }
@@ -344,7 +351,7 @@ void CircularViewContext::sl_toggleBySettings(CircularViewSettings* s) {
 }
 
 CircularViewAction::CircularViewAction()
-    : ADVSequenceWidgetAction(CIRCULAR_ACTION_NAME, tr("Show circular view")), view(nullptr), rmapWidget(nullptr) {
+    : ADVSequenceWidgetAction(CIRCULAR_ACTION_NAME, tr("Show circular view")), view(nullptr) {
 }
 
 void CircularViewAction::sl_circularStateChanged() {

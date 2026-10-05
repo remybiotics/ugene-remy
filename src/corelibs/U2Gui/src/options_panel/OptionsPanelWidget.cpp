@@ -23,6 +23,7 @@
 
 #include <QCoreApplication>
 #include <QHBoxLayout>
+#include <QSizePolicy>
 #include <QSpacerItem>
 
 #include <U2Core/U2SafePoints.h>
@@ -101,6 +102,7 @@ void OptionsPanelWidget::initOptionsLayout() {
 
     auto optionsWidget = new QWidget(optionsScrollArea);
     optionsWidget->setObjectName("OP_OPTIONS_WIDGET");
+    optionsWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     optionsWidget->setLayout(optionsWidgetLayout);
     optionsWidget->setStyleSheet("QWidget#OP_OPTIONS_WIDGET { "
                                  "background: palette(window);"
@@ -150,14 +152,16 @@ GroupOptionsWidget* OptionsPanelWidget::createOptionsWidget(const QString& group
         layout->addWidget(commonWidget);
     }
 
-    layout->addWidget(mainWidget);
+    layout->addWidget(mainWidget, 1);
 
     innerWidgets->setLayout(layout);
+    innerWidgets->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 
     auto groupWidget = new GroupOptionsWidget(groupId, title, documentationPage, innerWidgets, mainWidget);
+    groupWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 
     // Add widget to the layout and "parent" it
-    optionsWidgetLayout->insertWidget(0, groupWidget);
+    optionsWidgetLayout->insertWidget(0, groupWidget, 1);
 
     optionsWidgets.insert(0, groupWidget);
 

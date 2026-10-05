@@ -27,7 +27,9 @@ namespace U2 {
 
 class Annotation;
 class AnnotationGroup;
+class AnnotationTableObject;
 class ADVSequenceObjectContext;
+class AnnotatedDNAView;
 
 class EnzymeItem : public QTreeWidgetItem {
 public:
@@ -63,9 +65,18 @@ private slots:
     void sl_onAnnotationsInGroupRemoved(const QList<Annotation*>& anns, AnnotationGroup* group);
     void sl_onAnnotationsGroupCreated(AnnotationGroup* g);
     void sl_itemSelectionChanged();
+    void sl_onActiveSequenceChanged();
+    void sl_onSequenceRemoved(ADVSequenceObjectContext* sequenceContext);
+    void sl_onAnnotationObjectAdded(AnnotationTableObject* object);
+    void sl_onAnnotationObjectRemoved(AnnotationTableObject* object);
 
 private:
+    void setSequenceContext(ADVSequenceObjectContext* sequenceContext);
+    void unregisterAnnotationObjects();
+    void connectAnnotationObject(AnnotationTableObject* object);
+    void rebuildTree();
     ADVSequenceObjectContext* ctx;
+    AnnotatedDNAView* annotatedDnaView;
     QTreeWidget* treeWidget;
     EnzymeFolderItem* findEnzymeFolderByName(const QString& enzymeName);
     void registerAnnotationObjects();

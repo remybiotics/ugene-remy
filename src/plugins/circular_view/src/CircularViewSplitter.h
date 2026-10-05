@@ -33,7 +33,6 @@ class QScrollBar;
 namespace U2 {
 
 class CircularViewHeaderWidget;
-class RestrctionMapWidget;
 
 class CircularViewSplitter : public ADVSplitWidget {
     Q_OBJECT
@@ -46,9 +45,9 @@ public:
     }
     void updateState(const QVariantMap& m) override;
     void saveState(QVariantMap& m) override;
-    void addView(CircularView* view, RestrctionMapWidget* rmapWidget);
+    void addView(CircularView* view);
     void adaptSize();
-    void removeView(CircularView* view, RestrctionMapWidget* rmapWidget);
+    void removeView(CircularView* view);
     bool isEmpty();
     const QList<CircularView*>& getViewList() const {
         return circularViewList;
@@ -75,7 +74,6 @@ private:
     QAction* toggleRestrictionMapAction;
 
     QList<CircularView*> circularViewList;
-    QList<RestrctionMapWidget*> restrictionMapWidgets;
 };
 
 }  // namespace U2

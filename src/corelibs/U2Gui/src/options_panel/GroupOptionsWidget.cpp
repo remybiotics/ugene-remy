@@ -24,7 +24,6 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QSpacerItem>
 
 #include <U2Gui/HelpButton.h>
 
@@ -56,18 +55,16 @@ GroupOptionsWidget::GroupOptionsWidget(const QString& _groupId, const QString& _
 
     widget->setContentsMargins(10, 5, 5, 5);
 
-    // Layout and "parent" the widgets
+    // The content takes the leftover height so list tabs fill the options panel the same way Search in Sequence does.
     mainLayout = new QVBoxLayout();
     mainLayout->setContentsMargins(0, 0, 0, 15);
     mainLayout->setSpacing(0);
     mainLayout->addWidget(titleWidget);
-    mainLayout->addWidget(widget);
+    mainLayout->addWidget(widget, 1);
 
     auto helpButton = new QPushButton(tr("Help"), this);
     helpButton->setMaximumWidth(60);
     new HelpButton(this, helpButton, documentationPage);
-    auto spacer = new QSpacerItem(MIN_WIDGET_WIDTH, 0, QSizePolicy::Maximum, QSizePolicy::Expanding);
-    mainLayout->addSpacerItem(spacer);
 
     auto helpLayout = new QHBoxLayout();
     helpLayout->addWidget(helpButton, 0, Qt::AlignRight);

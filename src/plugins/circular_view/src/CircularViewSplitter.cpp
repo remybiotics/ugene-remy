@@ -26,7 +26,7 @@
 #include <QHBoxLayout>
 #include <QMessageBox>
 #include <QScrollArea>
-#include <QTreeWidget>
+#include <QSignalBlocker>
 
 #include <U2Core/DNASequenceObject.h>
 #include <U2Core/GUrlUtils.h>
@@ -36,12 +36,15 @@
 
 #include <U2Gui/ExportImageDialog.h>
 #include <U2Gui/GUIUtils.h>
+#include <U2Gui/OptionsPanel.h>
 #include <U2Gui/OrderedToolbar.h>
 #include <U2Gui/WidgetWithLocalToolbar.h>
 
+#include <U2View/AnnotatedDNAView.h>
+
 #include "CircularView.h"
 #include "CircularViewImageExportTask.h"
-#include "RestrictionMapWidget.h"
+#include "RestrictionMapWidgetFactory.h"
 
 namespace U2 {
 
@@ -70,6 +73,13 @@ CircularViewSplitter::CircularViewSplitter(AnnotatedDNAView* view)
     toggleRestrictionMapAction->setCheckable(true);
     toggleRestrictionMapAction->setChecked(true);
     connect(toggleRestrictionMapAction, SIGNAL(triggered(bool)), SLOT(sl_toggleRestrictionMap(bool)));
+
+    OptionsPanelController* optionsPanel = view->getOptionsPanelController();
+    SAFE_POINT(optionsPanel != nullptr, "Options panel is NULL", );
+    connect(optionsPanel, &OptionsPanelController::si_activeGroupChanged, this, [this](const QString& groupId) {
+        QSignalBlocker blocker(toggleRestrictionMapAction);
+        toggleRestrictionMapAction->setChecked(groupId == RestrictionMapWidgetFactory::getGroupId());
+    });
 
     connect(exportAction, SIGNAL(triggered()), SLOT(sl_export()));
 
@@ -117,7 +127,7 @@ void CircularViewSplitter::saveState(QVariantMap& m) {
     // TODO:
 }
 
-void CircularViewSplitter::addView(CircularView* view, RestrctionMapWidget* rmapWidget) {
+void CircularViewSplitter::addView(CircularView* view) {
     fitInViewAction->setDisabled(true);
     connect(zoomInAction, SIGNAL(triggered()), view, SLOT(sl_zoomIn()));
     connect(zoomOutAction, SIGNAL(triggered()), view, SLOT(sl_zoomOut()));
@@ -128,7 +138,6 @@ void CircularViewSplitter::addView(CircularView* view, RestrctionMapWidget* rmap
     connect(view, SIGNAL(si_fitInViewDisabled(bool)), SLOT(sl_updateFitInViewAction(bool)));
 
     circularViewList.append(view);
-    restrictionMapWidgets.append(rmapWidget);
 
     auto scrollArea = new QScrollArea(this);
     scrollArea->setWidget(view);
@@ -136,10 +145,7 @@ void CircularViewSplitter::addView(CircularView* view, RestrctionMapWidget* rmap
     scrollArea->setWidgetResizable(true);
     view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     splitter->addWidget(scrollArea);
-    splitter->addWidget(rmapWidget);
-
-    splitter->setStretchFactor(splitter->indexOf(scrollArea), 10);
-    splitter->setStretchFactor(splitter->indexOf(rmapWidget), 1);
+    splitter->setStretchFactor(splitter->indexOf(scrollArea), 1);
 
     connect(view, SIGNAL(si_wheelMoved(int)), SLOT(sl_moveSlider(int)));
 }
@@ -156,7 +162,7 @@ void CircularViewSplitter::sl_moveSlider(int delta) {
     horScroll->setSliderPosition(newPos);
 }
 
-void CircularViewSplitter::removeView(CircularView* view, RestrctionMapWidget* rmapWidget) {
+void CircularViewSplitter::removeView(CircularView* view) {
     SAFE_POINT(view != nullptr, "Circular View is NULL", );
     QWidget* viewport = view->parentWidget();
     SAFE_POINT(viewport != nullptr, "Circular View viewport is NULL", );
@@ -166,7 +172,6 @@ void CircularViewSplitter::removeView(CircularView* view, RestrctionMapWidget* r
     delete scrollArea;
 
     circularViewList.removeAll(view);
-    restrictionMapWidgets.removeAll(rmapWidget);
 }
 
 bool CircularViewSplitter::isEmpty() {
@@ -294,8 +299,13 @@ void CircularViewSplitter::sl_updateFitInViewAction(bool disabled) {
 }
 
 void CircularViewSplitter::sl_toggleRestrictionMap(bool toggle) {
-    foreach (QWidget* w, restrictionMapWidgets) {
-        w->setVisible(toggle);
+    OptionsPanelController* optionsPanel = dnaView->getOptionsPanelController();
+    SAFE_POINT(optionsPanel != nullptr, "Options panel is NULL", );
+    const QString& groupId = RestrictionMapWidgetFactory::getGroupId();
+    if (toggle) {
+        optionsPanel->openGroupById(groupId);
+    } else if (optionsPanel->getActiveGroupId() == groupId) {
+        optionsPanel->closeGroupById(groupId);
     }
 }
 
