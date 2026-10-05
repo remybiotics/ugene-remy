@@ -73,6 +73,10 @@ file(GLOB SRCS
         src/SamtoolsAdapter.cpp
 )
 
+if (APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+    list(APPEND SRCS src/rANS_neon_stubs.c)
+endif ()
+
 if (WIN32)
     file(GLOB WIN_SRCS
             src/samtools_core/htslib/win/pthread/autostatic.c

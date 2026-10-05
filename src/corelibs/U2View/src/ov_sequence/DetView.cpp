@@ -336,8 +336,13 @@ void DetView::sl_sequenceChanged() {
 }
 
 void DetView::sl_onDNASelectionChanged(LRegionsSelection* sel, const QVector<U2Region>& added, const QVector<U2Region>& removed) {
+    // The outline needs a gap between bases, so the number of visible bases can change.
+    updateVisibleRange();
+    updateScrollBar();
+    lastUpdateFlags |= GSLV_UF_NeedCompleteRedraw;
     GSequenceLineViewAnnotated::sl_onDNASelectionChanged(sel, added, removed);
     setSelectedTranslations();
+    update();
 }
 
 void DetView::sl_onAminoTTChanged() {
@@ -915,7 +920,7 @@ DetView* DetViewRenderArea::getDetView() const {
 }
 
 int DetViewRenderArea::getSymbolsPerLine() const {
-    return width() / charWidth;
+    return renderer->getSymbolsPerLine(width());
 }
 
 qint64 DetViewRenderArea::getLinesCount() const {

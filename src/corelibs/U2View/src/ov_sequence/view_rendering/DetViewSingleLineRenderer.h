@@ -57,6 +57,8 @@ public:
     DetViewSingleLineRenderer(DetView* detView, SequenceObjectContext* ctx);
 
     qint64 coordToPos(const QPoint& p, const QSize& canvasSize, const U2Region& visibleRange) const override;
+    int posToXCoord(qint64 pos, const QSize& canvasSize, const U2Region& visibleRange) const override;
+    int getSelectionHorizontalPadding() const override;
 
     /** Returns all x regions used to draw the given location of the annotation. */
     QList<U2Region> getAnnotationXRegions(Annotation* annotation, int locationRegionIndex, const AnnotationSettings* annotationSettings, const QSize& canvasSize, const U2Region& visibleRange) const override;
@@ -119,6 +121,8 @@ private:
 private:
     int getLineY(int line, int availableHeight) const;
     int getTextY(int line, int availableHeight) const;
+    /** Extra pixels inserted before this base so the selection outline has room. */
+    int selectionPaddingAt(qint64 pos, const U2Region& visibleRange) const;
     int getContentIndentY(int canvasHeight) const;
 
     int getVisibleDirectTransLine(int absoluteFrameNumber) const;

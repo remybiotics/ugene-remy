@@ -39,7 +39,8 @@ double DetViewRenderer::getCurrentScale() const {
 }
 
 qint64 DetViewRenderer::getSymbolsPerLine(const qint64 width) const {
-    return width / commonMetrics.charWidth;
+    const qint64 available = qMax(static_cast<qint64>(commonMetrics.charWidth), width - getSelectionHorizontalPadding());
+    return available / commonMetrics.charWidth;
 }
 
 DetViewRenderer* DetViewRendererFactory::createRenderer(DetView* detView, SequenceObjectContext* ctx, bool multiLine) {

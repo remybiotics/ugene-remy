@@ -136,13 +136,22 @@ target_compile_definitions(qtscript PRIVATE
 
 if(APPLE)
     # __CORRECT_ISO_CPP11_MATH_H_PROTO=1: Fix math function namespace conflicts in modern C++ headers
-    # _LIBCPP_DISABLE_DEPRECATION_WARNINGS=1: Suppress libc++ deprecation warnings 
-    # _LIBCPP_ENABLE_CXX17_REMOVED_FEATURES=1: Enable deprecated features that macOS libc++ disables even in C++14 mode
+    # _LIBCPP_DISABLE_DEPRECATION_WARNINGS=1: Suppress libc++ deprecation warnings
+    # Qt 6 compiles this target as C++17, so restore libc++ symbols removed in 17.
+    # _LIBCPP_ENABLE_CXX17_REMOVED_FEATURES no longer exists on recent Apple libc++.
     target_compile_definitions(qtscript PRIVATE
         __CORRECT_ISO_CPP11_MATH_H_PROTO=1
         _LIBCPP_DISABLE_DEPRECATION_WARNINGS=1
         _LIBCPP_ENABLE_CXX17_REMOVED_FEATURES=1
+        _LIBCPP_ENABLE_CXX17_REMOVED_AUTO_PTR=1
+        _LIBCPP_ENABLE_CXX17_REMOVED_BINDERS=1
+        _LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE=1
+        _LIBCPP_ENABLE_CXX17_REMOVED_UNEXPECTED_FUNCTIONS=1
+        _LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1
     )
+    # Apple Clang 17+ defaults to -fno-assume-unique-vtables, which breaks JSC CRTP
+    # (RefCounted<T> / JSGlobalData) with "not related by inheritance" errors.
+    target_compile_options(qtscript PRIVATE -fassume-unique-vtables)
 endif()
 
 # Suppress all warnings.

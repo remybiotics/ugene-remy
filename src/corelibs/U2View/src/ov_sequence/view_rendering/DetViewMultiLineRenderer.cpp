@@ -57,7 +57,14 @@ int DetViewMultiLineRenderer::posToXCoord(qint64 pos, const QSize& canvasSize, c
     CHECK(visibleRange.contains(pos) || pos == visibleRange.endPos(), -1);
 
     qint64 symbolsPerLine = getSymbolsPerLine(canvasSize.width());
-    return commonMetrics.charWidth * (pos % symbolsPerLine);
+    qint64 lineOffset = pos % symbolsPerLine;
+    qint64 lineStart = pos - lineOffset;
+    U2Region lineRange(lineStart, qMin(symbolsPerLine, visibleRange.endPos() - lineStart));
+    return singleLineRenderer->posToXCoord(pos, canvasSize, lineRange);
+}
+
+int DetViewMultiLineRenderer::getSelectionHorizontalPadding() const {
+    return singleLineRenderer->getSelectionHorizontalPadding();
 }
 
 QList<U2Region> DetViewMultiLineRenderer::getAnnotationXRegions(Annotation* annotation, int locationRegionIndex, const AnnotationSettings* annotationSettings, const QSize& canvasSize, const U2Region& visibleRange) const {

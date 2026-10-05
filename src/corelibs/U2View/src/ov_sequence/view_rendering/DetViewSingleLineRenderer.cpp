@@ -38,6 +38,14 @@
 
 #include "ov_sequence/DetViewSequenceEditor.h"
 
+namespace {
+
+/** Hot-pink selection outline. The side gap is wider so the stroke sits between bases. */
+const int SELECTION_BORDER_WIDTH = 4;
+const int SELECTION_SIDE_GAP = SELECTION_BORDER_WIDTH + 2;
+
+}  // namespace
+
 namespace U2 {
 
 /************************************************************************/
@@ -80,8 +88,55 @@ DetViewSingleLineRenderer::DetViewSingleLineRenderer(DetView* detView, SequenceO
       firstComplTransLine(0) {
 }
 
-qint64 DetViewSingleLineRenderer::coordToPos(const QPoint& p, const QSize& /*canvasSize*/, const U2Region& visibleRange) const {
-    return qMin(visibleRange.startPos + p.x() / commonMetrics.charWidth, visibleRange.endPos());
+qint64 DetViewSingleLineRenderer::coordToPos(const QPoint& p, const QSize& canvasSize, const U2Region& visibleRange) const {
+    if (visibleRange.length <= 0) {
+        return visibleRange.startPos;
+    }
+    for (qint64 pos = visibleRange.startPos; pos < visibleRange.endPos(); ++pos) {
+        const int left = posToXCoord(pos, canvasSize, visibleRange);
+        int right = left + commonMetrics.charWidth;
+        if (pos + 1 < visibleRange.endPos()) {
+            right = posToXCoord(pos + 1, canvasSize, visibleRange);
+        } else {
+            right += selectionPaddingAt(visibleRange.endPos(), visibleRange) - selectionPaddingAt(pos, visibleRange);
+        }
+        if (p.x() < right) {
+            return pos;
+        }
+    }
+    return visibleRange.endPos();
+}
+
+int DetViewSingleLineRenderer::posToXCoord(qint64 pos, const QSize& canvasSize, const U2Region& visibleRange) const {
+    const int x = SequenceViewRenderer::posToXCoord(pos, canvasSize, visibleRange);
+    if (x < 0) {
+        return x;
+    }
+    return x + selectionPaddingAt(pos, visibleRange);
+}
+
+int DetViewSingleLineRenderer::getSelectionHorizontalPadding() const {
+    if (ctx->getSequenceSelection()->isEmpty()) {
+        return 0;
+    }
+    // One gap before the selection and one after it.
+    return 2 * SELECTION_SIDE_GAP;
+}
+
+int DetViewSingleLineRenderer::selectionPaddingAt(qint64 pos, const U2Region& visibleRange) const {
+    int padding = 0;
+    const QVector<U2Region>& regions = ctx->getSequenceSelection()->getSelectedRegions();
+    for (const U2Region& region : qAsConst(regions)) {
+        const bool leadingGap = region.startPos >= visibleRange.startPos && region.startPos < visibleRange.endPos();
+        if (leadingGap && pos >= region.startPos) {
+            padding += SELECTION_SIDE_GAP;
+        }
+        const bool trailingGap = region.endPos() > visibleRange.startPos && region.endPos() <= visibleRange.endPos();
+        if (trailingGap && pos >= region.endPos()) {
+            padding += SELECTION_SIDE_GAP;
+        }
+    }
+    return padding;
 }
 
 QList<U2Region> DetViewSingleLineRenderer::getAnnotationXRegions(Annotation* annotation, int locationRegionIndex, const AnnotationSettings* annotationSettings, const QSize& canvasSize, const U2Region& visibleRange) const {
@@ -255,7 +310,8 @@ void DetViewSingleLineRenderer::drawDirect(QPainter& p, int availableHeight, con
     int y = getTextY(directLine, availableHeight);
     for (int i = 0; i < visibleRange.length; i++) {
         char nucl = seq[i];
-        p.drawText(i * commonMetrics.charWidth + commonMetrics.xCharOffset, y, QString(nucl));
+        const int x = posToXCoord(visibleRange.startPos + i, QSize(), visibleRange);
+        p.drawText(x + commonMetrics.xCharOffset, y, QString(nucl));
     }
 }
 
@@ -276,7 +332,8 @@ void DetViewSingleLineRenderer::drawComplement(QPainter& p, int availableHeight,
         for (int i = 0; i < visibleRange.length; i++) {
             char nucl = seq[i];
             char complNucl = map.at(nucl);
-            p.drawText(i * commonMetrics.charWidth + commonMetrics.xCharOffset, y, QString(complNucl));
+            const int x = posToXCoord(visibleRange.startPos + i, QSize(), visibleRange);
+            p.drawText(x + commonMetrics.xCharOffset, y, QString(complNucl));
         }
     }
 }
@@ -461,7 +518,7 @@ void DetViewSingleLineRenderer::drawDirectTranslations(QPainter& painter,
             }
             int xPos = 3 * aminoIndex + translationIndent + 1;
             SAFE_POINT(xPos >= 0 && xPos < visibleRange.length, "X-Position is out of visible range", );
-            int x = xPos * commonMetrics.charWidth + commonMetrics.xCharOffset;
+            int x = posToXCoord(visibleRange.startPos + xPos, QSize(), visibleRange) + commonMetrics.xCharOffset;
 
             QColor charColor;
             bool inAnnotation = deriveTranslationCharColor(translationStartPos + aminoIndex * 3,
@@ -548,7 +605,7 @@ void DetViewSingleLineRenderer::drawComplementTranslations(QPainter& p,
                 char amin = amino[j];
                 int xpos = visibleRange.length - (3 * j + 2 + dx);
                 SAFE_POINT(xpos >= 0 && xpos < visibleRange.length, "Position is out of visible range", );
-                int x = xpos * commonMetrics.charWidth + commonMetrics.xCharOffset;
+                int x = posToXCoord(visibleRange.startPos + xpos, QSize(), visibleRange) + commonMetrics.xCharOffset;
 
                 QColor charColor;
                 bool inAnnotation = deriveTranslationCharColor(trMetrics.maxUsedPos - (seq - revComplDna.constData()),
@@ -848,23 +905,52 @@ void DetViewSingleLineRenderer::setFontAndPenForTranslation(const char* seq,
 void DetViewSingleLineRenderer::highlight(QPainter& p, const U2Region& regionToHighlight, int line, const QSize& canvasSize, const U2Region& visibleRange) {
     SAFE_POINT(line >= 0, "Unexpected sequence view line number", );
 
-    int x = posToXCoord(regionToHighlight.startPos, canvasSize, visibleRange);
-    int width = posToXCoord(regionToHighlight.endPos(), canvasSize, visibleRange) - x;
+    int lettersLeft = posToXCoord(regionToHighlight.startPos, canvasSize, visibleRange);
+    int lettersRight = posToXCoord(regionToHighlight.endPos(), canvasSize, visibleRange);
+    if (lettersLeft < 0 || lettersRight < 0) {
+        return;
+    }
+
+    bool opensHere = false;
+    bool closesHere = false;
+    const QVector<U2Region>& selectedRegions = ctx->getSequenceSelection()->getSelectedRegions();
+    for (const U2Region& selectedRegion : qAsConst(selectedRegions)) {
+        if (selectedRegion.startPos == regionToHighlight.startPos) {
+            opensHere = true;
+        }
+        if (selectedRegion.endPos() == regionToHighlight.endPos()) {
+            closesHere = true;
+        }
+    }
+    // posToXCoord(end) includes the trailing gap. The letters stop before that gap.
+    if (closesHere) {
+        lettersRight -= SELECTION_SIDE_GAP;
+    }
+    if (lettersRight <= lettersLeft) {
+        lettersRight = lettersLeft + 1;
+    }
+
     int y = getLineY(line, canvasSize.height());
     int height = commonMetrics.lineHeight;
     p.save();
 
     bool isDarkTheme = AppContext::getMainWindow()->isDarkTheme();
-    QPen pen = p.pen();
-    pen.setColor(isDarkTheme ? Qt::white : Qt::gray);
-    pen.setWidth(2);
-    p.setPen(pen);
-    p.setBrush(Qt::NoBrush);
-    p.drawRect(x, y, width, height);
-
+    p.setPen(Qt::NoPen);
     p.setBrush(isDarkTheme ? Qt::lightGray : Qt::darkGray);
     p.setCompositionMode(QPainter::CompositionMode_ColorBurn);
-    p.drawRect(x, y, width, height);
+    p.drawRect(lettersLeft, y, lettersRight - lettersLeft, height);
+
+    // Center the stroke in the gap so it does not cover the selected bases or their neighbors.
+    const int leftEdge = opensHere ? lettersLeft - SELECTION_BORDER_WIDTH / 2 : lettersLeft + SELECTION_BORDER_WIDTH / 2;
+    const int rightEdge = closesHere ? lettersRight + SELECTION_BORDER_WIDTH / 2 : lettersRight - SELECTION_BORDER_WIDTH / 2;
+    const int topEdge = y + SELECTION_BORDER_WIDTH / 2;
+    const int bottomEdge = y + height - SELECTION_BORDER_WIDTH / 2;
+
+    p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    QPen borderPen(QColor("#FF69B4"), SELECTION_BORDER_WIDTH, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin);
+    p.setPen(borderPen);
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(leftEdge, topEdge, qMax(1, rightEdge - leftEdge), qMax(1, bottomEdge - topEdge));
 
     p.restore();
 }

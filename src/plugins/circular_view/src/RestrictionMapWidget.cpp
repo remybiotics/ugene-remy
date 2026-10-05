@@ -31,6 +31,7 @@
 #include <U2Core/AnnotationTableObject.h>
 #include <U2Core/AppContext.h>
 #include <U2Core/AutoAnnotationsSupport.h>
+#include <U2Core/DNASequenceSelection.h>
 #include <U2Core/Settings.h>
 #include <U2Core/U1AnnotationUtils.h>
 
@@ -175,15 +176,27 @@ EnzymeFolderItem* RestrctionMapWidget::findEnzymeFolderByName(const QString& enz
 }
 
 void RestrctionMapWidget::sl_itemSelectionChanged() {
-    QList<QTreeWidgetItem*> selected = treeWidget->selectedItems();
+    Annotation* selectedAnnotation = nullptr;
+    const QList<QTreeWidgetItem*> selected = treeWidget->selectedItems();
     foreach (QTreeWidgetItem* item, selected) {
         if (item->type() == ENZYME_ITEM_TYPE) {
             auto enzItem = static_cast<EnzymeItem*>(item);
+            selectedAnnotation = enzItem->getEnzymeAnnotation();
             AnnotationSelection* sel = ctx->getAnnotationsSelection();
             sel->clear();
-            sel->add(enzItem->getEnzymeAnnotation());
+            sel->add(selectedAnnotation);
         }
     }
+    if (selectedAnnotation == nullptr) {
+        return;
+    }
+
+    // Same path as clicking the site on the circular map: scroll every view onto it and
+    // select the site's sequence so the circular map, linear map, and sequence view all highlight it.
+    const bool crossesJunction = U1AnnotationUtils::isAnnotationContainsJunctionPoint(selectedAnnotation, ctx->getSequenceLength());
+    const int regionIndex = crossesJunction ? -1 : 0;
+    ctx->emitAnnotationActivated(selectedAnnotation, regionIndex);
+    ctx->getSequenceSelection()->setSelectedRegions(selectedAnnotation->getRegions());
 }
 
 void RestrctionMapWidget::sl_onAnnotationsGroupCreated(AnnotationGroup* g) {

@@ -37,6 +37,11 @@ public:
 
     double getCurrentScale() const override;
     qint64 getSymbolsPerLine(const qint64 width) const;
+
+    /** Pixels kept free on a line so a selection outline can sit between bases. */
+    virtual int getSelectionHorizontalPadding() const {
+        return 0;
+    }
     virtual int getDirectLine() const = 0;
 
     virtual void drawCursor(QPainter& p, const QSize& canvasSize, const U2Region& visibleRange) = 0;

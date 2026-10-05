@@ -9,7 +9,15 @@ project(ugene)
 
 #set(CMAKE_VERBOSE_MAKEFILE ON)
 
-set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE INTERNAL "" FORCE)
+# Official release packaging still targets Intel. For a local build, use the
+# host CPU so Homebrew/Qt on Apple Silicon can link. Override with
+# -DUGENE_OSX_ARCHITECTURES=x86_64 if you need the official arch.
+if(APPLE)
+    if(NOT UGENE_OSX_ARCHITECTURES)
+        set(UGENE_OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    endif()
+    set(CMAKE_OSX_ARCHITECTURES "${UGENE_OSX_ARCHITECTURES}" CACHE INTERNAL "" FORCE)
+endif()
 # Qt 6 for macOS requires at least macOS 13.0.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0")
 
@@ -20,6 +28,15 @@ message(STATUS "CMake host architecture   : ${CMAKE_HOST_SYSTEM_PROCESSOR}")
 if(APPLE)
   message(STATUS "OSX architectures         : ${CMAKE_OSX_ARCHITECTURES}")
   message(STATUS "OSX deployment target     : ${CMAKE_OSX_DEPLOYMENT_TARGET}")
+  # Qt 6 compiles as C++17. Recent Apple libc++ no longer provides
+  # _LIBCPP_ENABLE_CXX17_REMOVED_FEATURES as a catch-all.
+  add_compile_definitions(
+          _LIBCPP_ENABLE_CXX17_REMOVED_AUTO_PTR=1
+          _LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1
+          _LIBCPP_ENABLE_CXX17_REMOVED_BINDERS=1
+          _LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE=1
+          _LIBCPP_ENABLE_CXX17_REMOVED_UNEXPECTED_FUNCTIONS=1
+  )
 endif()
 
 add_definitions(
