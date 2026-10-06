@@ -430,16 +430,17 @@ void PanView::wheelEvent(QWheelEvent* we) {
     const int verticalDelta = wheelAxisDelta(angle.y(), pixel.y());
     const int horizontalDelta = wheelAxisDelta(angle.x(), pixel.x());
 
-    // A vertical wheel zooms. A horizontal wheel pans. The larger axis wins when a device reports both.
+    // A vertical wheel zooms around the pointer. A horizontal wheel pans. The larger axis wins when a device reports both.
     if (verticalDelta != 0 && qAbs(verticalDelta) >= qAbs(horizontalDelta)) {
+        const int pointerX = renderArea->mapFromGlobal(we->globalPosition().toPoint()).x();
         const int steps = takeWheelSteps(verticalDelta, wheelZoomAngleAccum);
         if (steps > 0) {
             for (int i = 0; i < steps && zoomInAction->isEnabled(); ++i) {
-                zoomInAction->trigger();
+                zoomAtPointer(true, pointerX);
             }
         } else if (steps < 0) {
             for (int i = 0; i < -steps && zoomOutAction->isEnabled(); ++i) {
-                zoomOutAction->trigger();
+                zoomAtPointer(false, pointerX);
             }
         }
     } else if (horizontalDelta != 0) {
@@ -451,6 +452,27 @@ void PanView::wheelEvent(QWheelEvent* we) {
         }
     }
     we->accept();
+}
+
+void PanView::zoomAtPointer(bool zoomIn, int pointerX) {
+    const int width = renderArea->width();
+    CHECK(width > 0, );
+
+    qint64 newLength = visibleRange.length;
+    if (zoomIn) {
+        CHECK(visibleRange.length > minNuclsPerScreen, );
+        newLength = qMax((visibleRange.length + 1) / 2, (qint64)minNuclsPerScreen);
+    } else {
+        CHECK(visibleRange.length < seqLen, );
+        newLength = qMin(visibleRange.length * 2, seqLen);
+    }
+    CHECK(newLength != visibleRange.length, );
+
+    // Keep the sequence coordinate under the pointer at the same screen x.
+    const double fraction = qBound(0.0, double(pointerX) / double(width), 1.0);
+    const double anchorPos = double(visibleRange.startPos) + fraction * double(visibleRange.length);
+    const qint64 newStart = qBound(qint64(0), qRound64(anchorPos - fraction * double(newLength)), seqLen - newLength);
+    setVisibleRange(U2Region(newStart, newLength));
 }
 
 void PanView::mousePressEvent(QMouseEvent* me) {

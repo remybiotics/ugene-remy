@@ -205,6 +205,9 @@ public:
 private:
     U2Region getRegionToZoom() const;
 
+    /** Zooms one step, keeping the sequence position under pointerX on screen. */
+    void zoomAtPointer(bool zoomIn, int pointerX);
+
 public:
     U2Region frameRange;
     int minNuclsPerScreen;
