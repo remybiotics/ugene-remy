@@ -21,6 +21,8 @@
 
 #include "PanViewRenderer.h"
 
+#include <limits>
+
 #include <U2Core/AnnotationSettings.h>
 #include <U2Core/AppContext.h>
 #include <U2Core/DNAAlphabet.h>
@@ -178,7 +180,22 @@ void PanViewRenderer::drawAnnotations(QPainter& p, const QSize& canvasSize, cons
             if (as->visible) {
                 QPen pen1(Qt::SolidLine);
                 pen1.setWidth(1);
+                // A zoomed-out restriction row can hold every enzyme hit. Sites that share a pixel
+                // draw the same mark, so later hits on that pixel are skipped.
+                const bool denseRestrictionRow = rData->key == PVRowData::RESTRICTION_SITE_NAME && rData->annotations.size() > 300;
+                int lastDrawnX = std::numeric_limits<int>::min();
                 foreach (Annotation* a, rData->annotations) {
+                    if (denseRestrictionRow) {
+                        const QVector<U2Region> regions = a->getRegions();
+                        if (regions.isEmpty() || !regions.first().intersects(visibleRange)) {
+                            continue;
+                        }
+                        const int x = posToXCoord(regions.first().startPos, canvasSize, visibleRange);
+                        if (x == lastDrawnX) {
+                            continue;
+                        }
+                        lastDrawnX = x;
+                    }
                     drawAnnotation(p, canvasSize, visibleRange, a, displaySettings);
                 }
                 // restore pen

@@ -21,6 +21,8 @@
 
 #include "AnnotationGroup.h"
 
+#include <QSet>
+
 #include <U2Core/AnnotationTableObject.h>
 #include <U2Core/L10n.h>
 #include <U2Core/TextUtils.h>
@@ -164,17 +166,36 @@ void AnnotationGroup::removeAnnotations(const QList<Annotation*>& anns) {
     U2OpStatusImpl os;
 
     QList<U2DataId> annotationsIds;
-    foreach (Annotation* a, anns) {
+    annotationsIds.reserve(anns.size());
+    for (Annotation* a : qAsConst(anns)) {
         SAFE_POINT(a != nullptr && a->getGroup() == this, "Unexpected annotation group", );
         annotationsIds.append(a->id);
     }
     U2FeatureUtils::removeFeatures(annotationsIds, parentObject->getEntityRef().dbiRef, os);
     SAFE_POINT_OP(os, );
 
-    foreach (Annotation* a, anns) {
-        annotationById.remove(a->id);
-        annotations.removeOne(a);
-        delete a;
+    // removeOne on every site is quadratic. Replacing a whole enzyme group is the All-sites path.
+    if (anns.size() == annotations.size()) {
+        qDeleteAll(annotations);
+        annotations.clear();
+        annotationById.clear();
+    } else {
+        QSet<Annotation*> removing;
+        removing.reserve(anns.size());
+        for (Annotation* a : qAsConst(anns)) {
+            removing.insert(a);
+        }
+        QList<Annotation*> kept;
+        kept.reserve(qMax(0, annotations.size() - anns.size()));
+        for (Annotation* a : qAsConst(annotations)) {
+            if (removing.contains(a)) {
+                annotationById.remove(a->id);
+                delete a;
+            } else {
+                kept.append(a);
+            }
+        }
+        annotations = kept;
     }
     parentObject->setModified(true);
 }

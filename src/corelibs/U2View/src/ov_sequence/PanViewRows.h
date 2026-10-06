@@ -36,9 +36,11 @@ public:
     bool fitToRow(const QVector<U2Region>& locations);
 
     QString key;
-    // invariant: keep the ranges in ascending order
+    // invariant: keep the ranges in ascending order, until acceptsOverlap is set
     QVector<U2Region> ranges;
     QList<Annotation*> annotations;
+    /** Further sites are stored here even when they overlap, so row count stays bounded. */
+    bool acceptsOverlap = false;
 };
 
 class PVRowsManager {
@@ -48,6 +50,7 @@ public:
 
     void addAnnotation(Annotation* a);
     void removeAnnotation(Annotation* f);
+    void removeAnnotations(const QList<Annotation*>& annotations);
 
     QList<PVRowData*> getRowsByName(const QString& name) const;
     int getRowCount() const;

@@ -24,7 +24,10 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDrag>
+#include <QElapsedTimer>
 #include <QHeaderView>
+#include <QSet>
+#include <QTimer>
 #include <QLineEdit>
 #include <QMap>
 #include <QMenu>
@@ -584,7 +587,18 @@ bool doesGroupPresentInList(const QList<AnnotationGroup*>& list, AnnotationGroup
 
 }  // namespace
 
+namespace {
+
+constexpr int ANNOTATION_TREE_LAZY_GROUP = 250;
+constexpr int ANNOTATION_TREE_BULK_ADD = 80;
+
+}  // namespace
+
 void AnnotationsTreeView::sl_onAnnotationsAdded(const QList<Annotation*>& as) {
+    // A large batch is laid out once, after the adds pause, instead of on every row.
+    if (as.size() > ANNOTATION_TREE_BULK_ADD) {
+        tree->setUpdatesEnabled(false);
+    }
     TreeSorter ts(this);
 
     QSet<AVGroupItem*> toUpdate;
@@ -596,6 +610,12 @@ void AnnotationsTreeView::sl_onAnnotationsAdded(const QList<Annotation*>& as) {
         }
         AVGroupItem* gi = findGroupItem(ag);
         if (gi != nullptr) {
+            if (ag->getAnnotations().size() > ANNOTATION_TREE_LAZY_GROUP) {
+                gi->annotationsMaterialized = false;
+                gi->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+                toUpdate.insert(gi);
+                continue;
+            }
             buildAnnotationTree(gi, a);
         } else {
             AnnotationGroup* childGroup = ag;
@@ -638,6 +658,7 @@ void AnnotationsTreeView::sl_onAnnotationsAdded(const QList<Annotation*>& as) {
 void AnnotationsTreeView::sl_onAnnotationsRemoved(const QList<Annotation*>& as) {
     TreeSorter ts(this);
     Q_UNUSED(ts);
+    cancelLazyGroupFill();
 
     tree->disconnect(this, SLOT(sl_onItemSelectionChanged()));
 
@@ -645,24 +666,46 @@ void AnnotationsTreeView::sl_onAnnotationsRemoved(const QList<Annotation*>& as) 
     SAFE_POINT(aObj != nullptr, "Invalid annotation table detected!", );
     AVGroupItem* groupItem = findGroupItem(aObj->getRootGroup());
     QHash<AVGroupItem*, int> groups2RemovedCount;
+    QSet<AVGroupItem*> groupsToRefresh;
+    QHash<AnnotationGroup*, AVGroupItem*> groupItems;
 
     foreach (Annotation* a, as) {
+        AVGroupItem* owner = nullptr;
+        if (a->getGroup() != nullptr) {
+            const auto cached = groupItems.constFind(a->getGroup());
+            if (cached == groupItems.cend()) {
+                owner = findGroupItem(a->getGroup());
+                groupItems.insert(a->getGroup(), owner);
+            } else {
+                owner = cached.value();
+            }
+            if (owner != nullptr) {
+                groupsToRefresh.insert(owner);
+                // The group list still contains these annotations while the signal runs.
+                ++groups2RemovedCount[owner];
+            }
+        }
+        // A lazy enzyme group has a count and no child rows. Searching the tree per site locks the cursor.
+        if (owner != nullptr && owner->childCount() == 0) {
+            continue;
+        }
         QList<AVAnnotationItem*> aItems;
-        groupItem->findAnnotationItems(aItems, a);
+        if (owner != nullptr) {
+            owner->findAnnotationItems(aItems, a);
+        } else if (groupItem != nullptr) {
+            groupItem->findAnnotationItems(aItems, a);
+        }
         for (AVAnnotationItem* ai : qAsConst(aItems)) {
             selectedAnnotation.remove(ai);
-
-            auto parentGroup = static_cast<AVGroupItem*>(ai->parent());
-            if (groups2RemovedCount.contains(parentGroup)) {
-                ++groups2RemovedCount[parentGroup];
-            } else {
-                groups2RemovedCount.insert(parentGroup, 1);
-            }
             delete ai;
         }
     }
     foreach (AVGroupItem* g, groups2RemovedCount.keys()) {
         g->updateVisual(groups2RemovedCount[g]);
+        groupsToRefresh.remove(g);
+    }
+    for (AVGroupItem* g : groupsToRefresh) {
+        g->updateVisual();
     }
 
     connect(tree, SIGNAL(itemSelectionChanged()), SLOT(sl_onItemSelectionChanged()));
@@ -712,6 +755,9 @@ void AnnotationsTreeView::sl_onGroupCreated(AnnotationGroup* g) {
 }
 
 void AnnotationsTreeView::sl_onGroupRemoved(AnnotationGroup* parent, AnnotationGroup* g) {
+    if (lazyFillGroup == g || lazyFillQueue.contains(g)) {
+        cancelLazyGroupFill();
+    }
     AVGroupItem* pg = findGroupItem(parent);
     if (pg == nullptr) {
         return;
@@ -750,8 +796,13 @@ AVGroupItem* AnnotationsTreeView::buildGroupTree(AVGroupItem* parentGroupItem, A
         buildGroupTree(groupItem, subgroup);
     }
     const QList<Annotation*> annotations = g->getAnnotations();
-    foreach (Annotation* a, annotations) {
-        buildAnnotationTree(groupItem, a, areAnnotationsNew);
+    if (annotations.size() > ANNOTATION_TREE_LAZY_GROUP) {
+        groupItem->annotationsMaterialized = false;
+        groupItem->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+    } else {
+        foreach (Annotation* a, annotations) {
+            buildAnnotationTree(groupItem, a, areAnnotationsNew);
+        }
     }
     groupItem->updateVisual();
     return groupItem;
@@ -1634,6 +1685,13 @@ void AnnotationsTreeView::sl_itemPressed(QTreeWidgetItem* i) {
 
 void AnnotationsTreeView::sl_itemExpanded(QTreeWidgetItem* qi) {
     auto i = static_cast<AVItem*>(qi);
+    if (i->type == AVItemType_Group) {
+        auto groupItem = static_cast<AVGroupItem*>(i);
+        if (!groupItem->annotationsMaterialized && groupItem->group->getAnnotations().size() > ANNOTATION_TREE_LAZY_GROUP) {
+            startLazyGroupFill(groupItem->group);
+        }
+        return;
+    }
     if (i->type != AVItemType_Annotation) {
         return;
     }
@@ -1657,7 +1715,13 @@ void AnnotationsTreeView::sl_annotationActivated(Annotation* annotation, int reg
 void AnnotationsTreeView::sl_annotationClicked(Annotation* annotation) {
     AnnotationSelection* annotationSelection = ctx->getAnnotationsSelection();
 
-    const QList<AVAnnotationItem*> annotationItems = findAnnotationItems(annotation);
+    QList<AVAnnotationItem*> annotationItems = findAnnotationItems(annotation);
+    if (annotationItems.isEmpty()) {
+        AVAnnotationItem* created = ensureAnnotationItem(annotation);
+        if (created != nullptr) {
+            annotationItems << created;
+        }
+    }
     CHECK(annotationItems.size() == 1, );
     AVAnnotationItem* item = annotationItems.first();
 
@@ -2074,7 +2138,94 @@ void AnnotationsTreeView::setSortingEnabled(bool v) {
 }
 
 void AnnotationsTreeView::sl_sortTree() {
+    if (!tree->updatesEnabled()) {
+        tree->setUpdatesEnabled(true);
+    }
     tree->setSortingEnabled(true);
+}
+
+void AnnotationsTreeView::cancelLazyGroupFill() {
+    lazyFillGroup = nullptr;
+    lazyFillAnnotations.clear();
+    lazyFillQueue.clear();
+    lazyFillIndex = 0;
+}
+
+void AnnotationsTreeView::startLazyGroupFill(AnnotationGroup* group) {
+    CHECK(group != nullptr, );
+    if (lazyFillGroup == group || lazyFillQueue.contains(group)) {
+        return;
+    }
+    if (lazyFillGroup != nullptr) {
+        lazyFillQueue.append(group);
+        return;
+    }
+    lazyFillGroup = group;
+    lazyFillAnnotations = group->getAnnotations();
+    lazyFillIndex = 0;
+    if (lazyFillScheduled) {
+        return;
+    }
+    lazyFillScheduled = true;
+    QTimer::singleShot(0, this, [this]() {
+        fillLazyGroupChunk();
+    });
+}
+
+void AnnotationsTreeView::fillLazyGroupChunk() {
+    lazyFillScheduled = false;
+    AVGroupItem* groupItem = lazyFillGroup == nullptr ? nullptr : findGroupItem(lazyFillGroup);
+    if (groupItem == nullptr) {
+        cancelLazyGroupFill();
+        if (!tree->updatesEnabled()) {
+            tree->setUpdatesEnabled(true);
+        }
+        return;
+    }
+
+    tree->setUpdatesEnabled(false);
+    tree->setSortingEnabled(false);
+    QElapsedTimer timer;
+    timer.start();
+    while (lazyFillIndex < lazyFillAnnotations.size() && timer.elapsed() < 12) {
+        Annotation* annotation = lazyFillAnnotations.at(lazyFillIndex++);
+        if (annotation == nullptr || annotation->getGroup() != lazyFillGroup) {
+            continue;
+        }
+        buildAnnotationTree(groupItem, annotation, false);
+    }
+    if (lazyFillIndex < lazyFillAnnotations.size()) {
+        lazyFillScheduled = true;
+        QTimer::singleShot(0, this, [this]() {
+            fillLazyGroupChunk();
+        });
+        return;
+    }
+
+    groupItem->annotationsMaterialized = true;
+    groupItem->setChildIndicatorPolicy(QTreeWidgetItem::DontShowIndicatorWhenChildless);
+    groupItem->updateVisual();
+    lazyFillGroup = nullptr;
+    lazyFillAnnotations.clear();
+    lazyFillIndex = 0;
+    if (!lazyFillQueue.isEmpty()) {
+        AnnotationGroup* nextGroup = lazyFillQueue.takeFirst();
+        startLazyGroupFill(nextGroup);
+        return;
+    }
+    tree->setUpdatesEnabled(true);
+    setSortingEnabled(true);
+}
+
+AVAnnotationItem* AnnotationsTreeView::ensureAnnotationItem(Annotation* annotation) {
+    CHECK(annotation != nullptr, nullptr);
+    const QList<AVAnnotationItem*> found = findAnnotationItems(annotation);
+    if (!found.isEmpty()) {
+        return found.first();
+    }
+    AVGroupItem* groupItem = findGroupItem(annotation->getGroup());
+    CHECK(groupItem != nullptr, nullptr);
+    return buildAnnotationTree(groupItem, annotation, false);
 }
 
 void AnnotationsTreeView::sl_edit() {

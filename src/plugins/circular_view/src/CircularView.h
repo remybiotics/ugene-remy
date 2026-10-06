@@ -24,6 +24,7 @@
 #include <QAction>
 #include <QFont>
 #include <QScrollBar>
+#include <QSet>
 
 #include <U2Core/Annotation.h>
 #include <U2Core/AppContext.h>
@@ -108,6 +109,8 @@ public slots:
 protected slots:
     void sl_onAnnotationSelectionChanged(AnnotationSelection*, const QList<Annotation*>& added, const QList<Annotation*>& removed) override;
     void sl_onDNASelectionChanged(LRegionsSelection* thiz, const QVector<U2Region>& added, const QVector<U2Region>& removed) override;
+    void sl_onAnnotationsAdded(const QList<Annotation*>& annotations) override;
+    void sl_onAnnotationsRemoved(const QList<Annotation*>& annotations) override;
 
 protected:
     void adaptSizes();
@@ -197,6 +200,11 @@ private:
     CircularAnnotationRegionItem* createAnnotationRegionItem(const U2Region& region, int seqLen, int yLevel, bool isComplementaryStrand, int index);
     QPainterPath createAnnotationArrowPath(float startAngle, float spanAngle, float dAlpha, const QRect& outerRect, const QRect& innerRect, const QRect& middleRect, bool complementary, bool isShort) const;
     void removeRegionsOutOfRange(QVector<U2Region>& location, int seqLen) const;
+    void clearDenseRestrictionSites();
+    void noteRestrictionSitesAdded(const QList<Annotation*>& annotations);
+    void appendRestrictionSiteToBuckets(Annotation* annotation);
+    void rebuildDenseRestrictionBuckets(const QVector<Annotation*>& sites, int seqLen);
+    void drawDenseRestrictionSites(QPainter& p) const;
 
     static const int OUTER_ELLIPSE_SIZE;
     static const int ELLIPSE_DELTA;
@@ -240,7 +248,16 @@ private:
     qreal mouseAngle;
     QVector<QRect> positionsAvailableForLabels;
     QMap<int, CircularAnnotationLabel*> engagedLabelPositionToLabel;
-    int oldYlevel;
+    int oldYlevel = 0;
+
+    /** Above this many restriction sites the map draws one arc per degree instead of a path per site. */
+    static const int DENSE_RESTRICTION_SITE_LIMIT;
+    bool denseRestrictionSites = false;
+    bool restrictionBucketsCurrent = false;
+    int trackedRestrictionCount = 0;
+    int denseRestrictionOrbit = -1;
+    int denseRestrictionSeqLen = 0;
+    QVector<QVector<Annotation*>> restrictionBuckets;
 };
 
 }  // namespace U2

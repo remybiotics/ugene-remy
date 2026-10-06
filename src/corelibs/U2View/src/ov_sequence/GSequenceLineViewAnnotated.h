@@ -88,9 +88,9 @@ protected slots:
 
     void sl_onAnnotationsInGroupRemoved(const QList<Annotation*>&, AnnotationGroup*);
 
-    void sl_onAnnotationsAdded(const QList<Annotation*>&);
+    virtual void sl_onAnnotationsAdded(const QList<Annotation*>&);
 
-    void sl_onAnnotationsRemoved(const QList<Annotation*>&);
+    virtual void sl_onAnnotationsRemoved(const QList<Annotation*>&);
 
     virtual void sl_onAnnotationsModified(const QList<AnnotationModification>& annotationModifications);
 

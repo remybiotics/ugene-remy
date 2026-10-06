@@ -23,15 +23,17 @@
 
 #include <U2Core/AppContext.h>
 #include <U2Core/Counter.h>
-#include <U2Core/CreateAnnotationTask.h>
 #include <U2Core/DNAAlphabet.h>
 #include <U2Core/DNASequenceObject.h>
 #include <U2Core/GHints.h>
 #include <U2Core/GenbankFeatures.h>
+#include <U2Core/L10n.h>
 #include <U2Core/Log.h>
 #include <U2Core/ProjectModel.h>
 #include <U2Core/Settings.h>
 #include <U2Core/U2AlphabetUtils.h>
+#include <U2Core/U2DbiUtils.h>
+#include <U2Core/U2FeatureUtils.h>
 #include <U2Core/U2SafePoints.h>
 
 #include "EnzymesIO.h"
@@ -63,6 +65,110 @@ void FindEnzymesToAnnotationsTask::prepare() {
     }
 }
 
+namespace {
+
+constexpr int ENZYME_ANNOTATION_SAVE_CHUNK = 400;
+// Groups no larger than this are written in one slice so the annotations tree can build their rows
+// before the save task finishes. Larger groups start on their own slice.
+constexpr int ENZYME_ANNOTATION_SMALL_GROUP = 250;
+
+/**
+ * Writes enzyme hits on the GUI thread in bounded slices.
+ * CreateAnnotationsTask runs the whole insert inside one scheduler turn, which locks the cursor.
+ * ReportResult_CallMeAgain returns to the event loop between slices.
+ */
+class SaveEnzymeAnnotationsTask : public Task {
+public:
+    SaveEnzymeAnnotationsTask(AnnotationTableObject* table, const QMap<QString, QList<SharedAnnotationData>>& annotations)
+        : Task(tr("Save restriction sites"), TaskFlags_NR_FOSCOE),
+          annotationObject(table),
+          pending(annotations),
+          groupNames(pending.keys()) {
+        tpm = Progress_Manual;
+        for (const QString& groupName : qAsConst(groupNames)) {
+            total += pending.value(groupName).size();
+        }
+        stateInfo.setProgress(0);
+    }
+
+    ReportResult report() override {
+        CHECK(!hasError() && !isCanceled(), ReportResult_Finished);
+        CHECK_EXT(!annotationObject.isNull(), setError(tr("Annotation table does not exist")), ReportResult_Finished);
+        CHECK_EXT(!annotationObject->isStateLocked(), setError(L10N::errorObjectIsReadOnly(annotationObject->getGObjectName())), ReportResult_Finished);
+        if (saved >= total || groupIndex >= groupNames.size()) {
+            stateInfo.setProgress(100);
+            return ReportResult_Finished;
+        }
+
+        int savedThisCall = 0;
+        while (savedThisCall < ENZYME_ANNOTATION_SAVE_CHUNK && groupIndex < groupNames.size()) {
+            const QString& groupName = groupNames.at(groupIndex);
+            const QList<SharedAnnotationData>& groupAnnotations = pending[groupName];
+            if (annotationIndex >= groupAnnotations.size()) {
+                ++groupIndex;
+                annotationIndex = 0;
+                continue;
+            }
+            const int groupRemaining = groupAnnotations.size() - annotationIndex;
+            if (annotationIndex == 0 && savedThisCall > 0 && groupRemaining > ENZYME_ANNOTATION_SMALL_GROUP) {
+                break;
+            }
+            int count = qMin(ENZYME_ANNOTATION_SAVE_CHUNK - savedThisCall, groupRemaining);
+            if (annotationIndex == 0 && groupRemaining <= ENZYME_ANNOTATION_SMALL_GROUP) {
+                count = groupRemaining;
+            }
+            if (!saveSlice(groupName, groupAnnotations.mid(annotationIndex, count))) {
+                return ReportResult_Finished;
+            }
+            annotationIndex += count;
+            saved += count;
+            savedThisCall += count;
+        }
+
+        stateInfo.setProgress(total == 0 ? 100 : int((saved * 100LL) / total));
+        stateInfo.setDescription(tr("Saved %1 of %2 restriction sites").arg(saved).arg(total));
+        if (saved >= total || groupIndex >= groupNames.size()) {
+            stateInfo.setProgress(100);
+            return ReportResult_Finished;
+        }
+        return ReportResult_CallMeAgain;
+    }
+
+private:
+    bool saveSlice(const QString& groupName, const QList<SharedAnnotationData>& slice) {
+        CHECK(!slice.isEmpty(), true);
+        AnnotationTableObject* table = annotationObject.data();
+        U2DataId rootFeatureId = table->getRootFeatureId();
+        const U2DbiRef dbiRef = table->getEntityRef().dbiRef;
+        AnnotationGroup* group = table->getRootGroup()->getSubgroup(groupName, true);
+        CHECK_EXT(group != nullptr, setError(tr("Failed to create the restriction site group")), false);
+
+        const QList<U2Feature> features = U2FeatureUtils::exportAnnotationDataToFeatures(slice, rootFeatureId, group->id, dbiRef, stateInfo);
+        CHECK_OP(stateInfo, false);
+        SAFE_POINT_EXT(features.size() == slice.size(), setError(tr("Failed to store restriction sites")), false);
+
+        QList<Annotation*> created;
+        created.reserve(slice.size());
+        for (int i = 0; i < slice.size(); ++i) {
+            created << new Annotation(features.at(i).id, slice.at(i), group, table);
+        }
+        group->addShallowAnnotations(created, false);
+        table->setModified(true);
+        table->emit_onAnnotationsAdded(created);
+        return true;
+    }
+
+    QPointer<AnnotationTableObject> annotationObject;
+    QMap<QString, QList<SharedAnnotationData>> pending;
+    QStringList groupNames;
+    int groupIndex = 0;
+    int annotationIndex = 0;
+    int total = 0;
+    int saved = 0;
+};
+
+}  // namespace
+
 QList<Task*> FindEnzymesToAnnotationsTask::onSubTaskFinished(Task* subTask) {
     QList<Task*> result;
 
@@ -83,7 +189,9 @@ QList<Task*> FindEnzymesToAnnotationsTask::onSubTaskFinished(Task* subTask) {
         }
     }
 
-    result << new CreateAnnotationsTask(annotationObject, annotationsByGroupMap);
+    if (!annotationsByGroupMap.isEmpty()) {
+        result << new SaveEnzymeAnnotationsTask(annotationObject, annotationsByGroupMap);
+    }
     return result;
 }
 

@@ -237,12 +237,15 @@ void PanView::registerAnnotations(const QList<Annotation*>& l) {
 
 void PanView::unregisterAnnotations(const QList<Annotation*>& l) {
     AnnotationSettingsRegistry* asr = AppContext::getAnnotationsSettingsRegistry();
+    QList<Annotation*> visible;
+    visible.reserve(l.size());
     foreach (Annotation* a, l) {
         AnnotationSettings* as = asr->getAnnotationSettings(a->getData());
         if (as->visible) {
-            rowsManager->removeAnnotation(a);
+            visible.append(a);
         }
     }
+    rowsManager->removeAnnotations(visible);
     emit si_updateRows();
 }
 

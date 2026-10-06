@@ -183,6 +183,21 @@ void CircularView::setAngle(int angle) {
     renderArea->update();
 }
 
+void CircularView::sl_onAnnotationsAdded(const QList<Annotation*>& annotations) {
+    if (circularViewRenderArea != nullptr) {
+        circularViewRenderArea->noteRestrictionSitesAdded(annotations);
+    }
+    GSequenceLineViewAnnotated::sl_onAnnotationsAdded(annotations);
+}
+
+void CircularView::sl_onAnnotationsRemoved(const QList<Annotation*>& annotations) {
+    GSequenceLineViewAnnotated::sl_onAnnotationsRemoved(annotations);
+    if (circularViewRenderArea != nullptr) {
+        // Drop the cached site pointers before the annotations are deleted.
+        circularViewRenderArea->clearDenseRestrictionSites();
+    }
+}
+
 void CircularView::sl_onAnnotationSelectionChanged(AnnotationSelection* selection, const QList<Annotation*>& added, const QList<Annotation*>& removed) {
     GSequenceLineViewAnnotated::sl_onAnnotationSelectionChanged(selection, added, removed);
     renderArea->update();
@@ -356,6 +371,14 @@ const int CircularViewRenderArea::MARKER_LEN = 30;
 const int CircularViewRenderArea::ARR_LEN = 4;
 const int CircularViewRenderArea::ARR_WIDTH = 10;
 const int CircularViewRenderArea::NOTCH_SIZE = 5;
+const int CircularViewRenderArea::DENSE_RESTRICTION_SITE_LIMIT = 250;
+
+namespace {
+
+constexpr int DENSE_RESTRICTION_BUCKETS = 360;
+constexpr int DENSE_RESTRICTION_HIT_LIMIT = 40;
+
+}  // namespace
 
 CircularViewRenderArea::CircularViewRenderArea(CircularView* d)
     : GSequenceLineViewAnnotatedRenderArea(d),
@@ -757,6 +780,7 @@ void CircularViewRenderArea::drawAnnotations(QPainter& p) {
     foreach (CircularAnnotationItem* item, circItems) {
         item->paint(&p, nullptr, this);
     }
+    drawDenseRestrictionSites(p);
     if (settings->labelMode == CircularViewSettings::None) {
         return;
     }
@@ -833,12 +857,12 @@ void CircularViewRenderArea::buildItems(QFont labelFont) {
     AnnotationSettingsRegistry* asr = AppContext::getAnnotationsSettingsRegistry();
     QSet<AnnotationTableObject*> anns = ctx->getAnnotationObjects(true);
     QSet<AnnotationTableObject*> autoAnns = ctx->getAutoAnnotationObjects();
-    QSet<Annotation*> restrictionSites;
+    int seenRestrictionSites = 0;
     for (AnnotationTableObject* ao : qAsConst(anns)) {
         bool isAutoAnnotation = autoAnns.contains(ao);
         foreach (Annotation* a, ao->getAnnotations()) {
             if (a->getType() == U2FeatureTypes::RestrictionSite) {
-                restrictionSites << a;
+                ++seenRestrictionSites;
                 continue;
             }
             AnnotationSettings* as = asr->getAnnotationSettings(a->getData());
@@ -848,11 +872,159 @@ void CircularViewRenderArea::buildItems(QFont labelFont) {
     }
 
     regionY.append(QVector<U2Region>());
-    foreach (Annotation* a, restrictionSites) {
-        AnnotationSettings* as = asr->getAnnotationSettings(a->getData());
-        buildAnnotationItem(DrawAnnotationPass_DrawFill, a, regionY.count() - 1, false, as);
-        buildAnnotationLabel(labelFont, a, as, true);
+    const int restrictionOrbit = regionY.count() - 1;
+    const int seqLen = ctx->getSequenceLength();
+    const bool bucketsReady = restrictionBucketsCurrent && denseRestrictionSites && denseRestrictionSeqLen == seqLen &&
+                              trackedRestrictionCount == seenRestrictionSites && seenRestrictionSites > DENSE_RESTRICTION_SITE_LIMIT;
+    if (seenRestrictionSites > DENSE_RESTRICTION_SITE_LIMIT && seqLen > 0) {
+        // One path per site is rebuilt on every paint and scanned on every mouse move.
+        // Past the limit the ring is a cached degree bucket, updated as sites arrive.
+        denseRestrictionOrbit = restrictionOrbit;
+        if (!bucketsReady) {
+            QVector<Annotation*> restrictionSites;
+            restrictionSites.reserve(seenRestrictionSites);
+            for (AnnotationTableObject* ao : qAsConst(anns)) {
+                foreach (Annotation* a, ao->getAnnotations()) {
+                    if (a->getType() == U2FeatureTypes::RestrictionSite) {
+                        restrictionSites.append(a);
+                    }
+                }
+            }
+            denseRestrictionSites = true;
+            denseRestrictionSeqLen = seqLen;
+            rebuildDenseRestrictionBuckets(restrictionSites, seqLen);
+            trackedRestrictionCount = seenRestrictionSites;
+            restrictionBucketsCurrent = true;
+        }
+        const QList<Annotation*> selected = ctx->getAnnotationsSelection()->getAnnotations();
+        for (Annotation* annotation : selected) {
+            if (annotation == nullptr || annotation->getType() != U2FeatureTypes::RestrictionSite) {
+                continue;
+            }
+            AnnotationSettings* as = asr->getAnnotationSettings(annotation->getData());
+            buildAnnotationItem(DrawAnnotationPass_DrawFill, annotation, restrictionOrbit, false, as);
+            buildAnnotationLabel(labelFont, annotation, as, true);
+        }
+    } else {
+        clearDenseRestrictionSites();
+        for (AnnotationTableObject* ao : qAsConst(anns)) {
+            foreach (Annotation* a, ao->getAnnotations()) {
+                if (a->getType() != U2FeatureTypes::RestrictionSite) {
+                    continue;
+                }
+                AnnotationSettings* as = asr->getAnnotationSettings(a->getData());
+                buildAnnotationItem(DrawAnnotationPass_DrawFill, a, restrictionOrbit, false, as);
+                buildAnnotationLabel(labelFont, a, as, true);
+            }
+        }
+        trackedRestrictionCount = seenRestrictionSites;
+        restrictionBucketsCurrent = true;
     }
+}
+
+void CircularViewRenderArea::clearDenseRestrictionSites() {
+    denseRestrictionSites = false;
+    restrictionBucketsCurrent = false;
+    trackedRestrictionCount = 0;
+    denseRestrictionOrbit = -1;
+    denseRestrictionSeqLen = 0;
+    for (QVector<Annotation*>& bucket : restrictionBuckets) {
+        bucket.clear();
+    }
+}
+
+void CircularViewRenderArea::noteRestrictionSitesAdded(const QList<Annotation*>& annotations) {
+    QVector<Annotation*> added;
+    for (Annotation* annotation : annotations) {
+        if (annotation != nullptr && annotation->getType() == U2FeatureTypes::RestrictionSite) {
+            added.append(annotation);
+        }
+    }
+    if (added.isEmpty()) {
+        return;
+    }
+    trackedRestrictionCount += added.size();
+    if (!denseRestrictionSites || !restrictionBucketsCurrent || denseRestrictionSeqLen <= 0) {
+        restrictionBucketsCurrent = false;
+        return;
+    }
+    for (Annotation* annotation : added) {
+        appendRestrictionSiteToBuckets(annotation);
+    }
+}
+
+void CircularViewRenderArea::appendRestrictionSiteToBuckets(Annotation* annotation) {
+    if (annotation == nullptr || denseRestrictionSeqLen <= 0) {
+        return;
+    }
+    if (restrictionBuckets.size() != DENSE_RESTRICTION_BUCKETS) {
+        restrictionBuckets.resize(DENSE_RESTRICTION_BUCKETS);
+    }
+    const int seqLen = denseRestrictionSeqLen;
+    const QVector<U2Region> regions = annotation->getRegions();
+    for (const U2Region& region : regions) {
+        if (region.length <= 0) {
+            continue;
+        }
+        const qint64 lastPos = region.endPos() - 1;
+        int firstBucket = int((region.startPos * qint64(DENSE_RESTRICTION_BUCKETS)) / seqLen);
+        int lastBucket = int((lastPos * qint64(DENSE_RESTRICTION_BUCKETS)) / seqLen);
+        firstBucket = qBound(0, firstBucket, DENSE_RESTRICTION_BUCKETS - 1);
+        lastBucket = qBound(0, lastBucket, DENSE_RESTRICTION_BUCKETS - 1);
+        if (lastBucket < firstBucket) {
+            for (int bucket = firstBucket; bucket < DENSE_RESTRICTION_BUCKETS; ++bucket) {
+                restrictionBuckets[bucket].append(annotation);
+            }
+            for (int bucket = 0; bucket <= lastBucket; ++bucket) {
+                restrictionBuckets[bucket].append(annotation);
+            }
+        } else {
+            for (int bucket = firstBucket; bucket <= lastBucket; ++bucket) {
+                restrictionBuckets[bucket].append(annotation);
+            }
+        }
+    }
+}
+
+void CircularViewRenderArea::rebuildDenseRestrictionBuckets(const QVector<Annotation*>& sites, int seqLen) {
+    denseRestrictionSeqLen = seqLen;
+    if (restrictionBuckets.size() != DENSE_RESTRICTION_BUCKETS) {
+        restrictionBuckets.resize(DENSE_RESTRICTION_BUCKETS);
+    }
+    for (QVector<Annotation*>& bucket : restrictionBuckets) {
+        bucket.clear();
+    }
+    if (seqLen <= 0) {
+        return;
+    }
+    for (Annotation* annotation : sites) {
+        appendRestrictionSiteToBuckets(annotation);
+    }
+}
+
+void CircularViewRenderArea::drawDenseRestrictionSites(QPainter& p) const {
+    if (!denseRestrictionSites || denseRestrictionSeqLen <= 0 || restrictionBuckets.isEmpty()) {
+        return;
+    }
+    const int yLevel = qMax(0, denseRestrictionOrbit);
+    const QRect middleRect(-middleEllipseSize / 2 - yLevel * ellipseDelta / 2,
+                           -middleEllipseSize / 2 - yLevel * ellipseDelta / 2,
+                           middleEllipseSize + yLevel * ellipseDelta,
+                           middleEllipseSize + yLevel * ellipseDelta);
+    QPen pen(QColor(0x3D, 0x7A, 0xB5));
+    pen.setWidth(CircularView::CV_REGION_ITEM_WIDTH);
+    pen.setCapStyle(Qt::FlatCap);
+    p.save();
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    for (int bucket = 0; bucket < restrictionBuckets.size(); ++bucket) {
+        if (restrictionBuckets.at(bucket).isEmpty()) {
+            continue;
+        }
+        const float startAngle = float(bucket) + float(rotationDegree);
+        p.drawArc(middleRect, qRound(-startAngle * 16.0f), -16);
+    }
+    p.restore();
 }
 
 int CircularViewRenderArea::findOrbit(const QVector<U2Region>& location, Annotation* a) {
@@ -1147,6 +1319,33 @@ QList<Annotation*> CircularViewRenderArea::findAnnotationsByCoord(const QPoint& 
             if (item->getAnnotation()->getType() != U2FeatureTypes::RestrictionSite) {
                 // only restriction sites can intersect
                 return res;
+            }
+        }
+    }
+    if (denseRestrictionSites && denseRestrictionSeqLen > 0 && !restrictionBuckets.isEmpty()) {
+        const int yLevel = qMax(0, denseRestrictionOrbit);
+        const qreal outerR = (outerEllipseSize + yLevel * ellipseDelta) / 2.0;
+        const qreal innerR = (innerEllipseSize + yLevel * ellipseDelta) / 2.0;
+        const qreal dist = hypot(cp.x(), cp.y());
+        if (dist >= innerR - 4.0 && dist <= outerR + 4.0) {
+            const qint64 pos = asinToPos(coordToAsin(coord));
+            int bucket = int((pos * DENSE_RESTRICTION_BUCKETS) / denseRestrictionSeqLen);
+            bucket = qBound(0, bucket, restrictionBuckets.size() - 1);
+            const QVector<Annotation*>& sites = restrictionBuckets.at(bucket);
+            for (Annotation* annotation : sites) {
+                if (res.contains(annotation)) {
+                    continue;
+                }
+                const QVector<U2Region> regions = annotation->getRegions();
+                for (const U2Region& region : regions) {
+                    if (region.contains(pos)) {
+                        res.append(annotation);
+                        break;
+                    }
+                }
+                if (res.size() >= DENSE_RESTRICTION_HIT_LIMIT) {
+                    return res;
+                }
             }
         }
     }

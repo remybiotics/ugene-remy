@@ -21,7 +21,10 @@
 
 #pragma once
 
+#include <memory>
+
 #include <QTreeWidget>
+#include <QVector>
 
 class QPushButton;
 
@@ -35,13 +38,25 @@ class AnnotatedDNAView;
 
 class EnzymeItem : public QTreeWidgetItem {
 public:
-    EnzymeItem(const QString& locationStr, Annotation* a);
+    EnzymeItem(const QString& locationStr, Annotation* a, quint64 token);
     Annotation* getEnzymeAnnotation() const {
         return annotation;
+    }
+    void clearAnnotation() {
+        annotation = nullptr;
+    }
+    quint64 getToken() const {
+        return token;
+    }
+    void setMethylationFlags(int flags);
+    int getMethylationFlags() const {
+        return methylationFlags;
     }
 
 private:
     Annotation* annotation;
+    quint64 token = 0;
+    int methylationFlags = 0;
 };
 
 class EnzymeFolderItem : public QTreeWidgetItem {
@@ -49,17 +64,32 @@ class EnzymeFolderItem : public QTreeWidgetItem {
 
 public:
     EnzymeFolderItem(const QString& name);
-    void addEnzymeItem(Annotation* enzAnn);
-    void removeEnzymeItem(Annotation* enzAnn);
+    EnzymeItem* createEnzymeItem(Annotation* enzAnn, quint64 token);
+    void detachEnzymeItem(EnzymeItem* item);
+    void publishSiteCount();
+    void adjustBlockedCounts(int oldFlags, int newFlags);
+    void publishMethylationMarker();
+    void addHeldSite();
+    void removeHeldSite();
+    int siteCount() const {
+        return childCount() + heldSiteCount;
+    }
     const QString& getName() const {
         return enzymeName;
     }
+
+private:
+    void syncExpander();
+    int damBlockedCount = 0;
+    int dcmBlockedCount = 0;
+    int heldSiteCount = 0;
 };
 
 class RestrctionMapWidget : public QWidget {
     Q_OBJECT
 public:
     RestrctionMapWidget(ADVSequenceObjectContext* ctx, QWidget* p);
+    ~RestrctionMapWidget() override;
 
 private slots:
     void sl_onAnnotationsAdded(const QList<Annotation*>& anns);
@@ -67,6 +97,7 @@ private slots:
     void sl_onAnnotationsInGroupRemoved(const QList<Annotation*>& anns, AnnotationGroup* group);
     void sl_onAnnotationsGroupCreated(AnnotationGroup* g);
     void sl_itemSelectionChanged();
+    void sl_itemExpanded(QTreeWidgetItem* item);
     void sl_onActiveSequenceChanged();
     void sl_onSequenceRemoved(ADVSequenceObjectContext* sequenceContext);
     void sl_onAnnotationObjectAdded(AnnotationTableObject* object);
@@ -93,6 +124,30 @@ private:
     void registerAnnotationObjects();
     void updateTreeWidget();
     void initTreeWidget();
+    bool loadSequence(QByteArray& sequence, bool& circular) const;
+    void queueAnnotations(const QList<Annotation*>& anns);
+    void insertAnnotationChunk();
+    void scheduleAnnotationInsert();
+    void removeAnnotationsFromMap(const QList<Annotation*>& anns);
+    void detachEnzymeItems(const QVector<EnzymeItem*>& items);
+    void detachNextEnzymeItems();
+    void scheduleDetach();
+    void markQueuedSitesOnGuiThread();
+    void startMethylationJob();
+    void pollMethylation();
+    void scheduleMethylationPoll();
+    void applyMethylationChunk();
+    void scheduleMarkApply();
+    void releaseMethylationColumn();
+    void restoreTreeUpdates();
+    void invalidateMethylationTracking();
+    void scheduleMaterialize();
+    void materializeHeldChunk();
+
+    struct MethylationState;
+    std::unique_ptr<MethylationState> methylation;
+
+    friend class HostMethylationRunnable;
 };
 
 }  // namespace U2

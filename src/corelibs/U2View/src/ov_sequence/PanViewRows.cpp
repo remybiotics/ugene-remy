@@ -21,6 +21,7 @@
 
 #include "PanViewRows.h"
 
+#include <QSet>
 #include <QVarLengthArray>
 
 #include <U2Core/AnnotationTableObject.h>
@@ -91,11 +92,30 @@ void PVRowsManager::addAnnotation(Annotation* a) {
     QString name = data->type == U2FeatureTypes::RestrictionSite ? PVRowData::RESTRICTION_SITE_NAME : data->name;
     auto rowsByName = getRowsByName(name);
     for (auto row : qAsConst(rowsByName)) {
+        if (row->acceptsOverlap) {
+            row->ranges << location;
+            row->annotations.append(a);
+            rowByAnnotation[a] = row;
+            return;
+        }
+    }
+    for (auto row : qAsConst(rowsByName)) {
         if (row->fitToRow(location)) {
             row->annotations.append(a);
             rowByAnnotation[a] = row;
             return;
         }
+    }
+
+    // Stacking every overlapping restriction site builds one row per site and locks the cursor.
+    constexpr int MAX_RESTRICTION_SITE_ROWS = 8;
+    if (data->type == U2FeatureTypes::RestrictionSite && rowsByName.size() >= MAX_RESTRICTION_SITE_ROWS) {
+        PVRowData* row = rowsByName.last();
+        row->acceptsOverlap = true;
+        row->ranges << location;
+        row->annotations.append(a);
+        rowByAnnotation[a] = row;
+        return;
     }
 
     auto row = new PVRowData(name);
@@ -127,10 +147,51 @@ void PVRowsManager::removeAnnotation(Annotation* a) {
     CHECK(row != nullptr, );  // annotation may present in a DB, but has not been added to the panview yet
     rowByAnnotation.remove(a);
     row->annotations.removeOne(a);
-    substractRegions(row->ranges, a->getRegions());
+    if (!row->acceptsOverlap) {
+        substractRegions(row->ranges, a->getRegions());
+    }
     if (row->annotations.isEmpty()) {
         rows.removeOne(row);
         delete row;
+    }
+}
+
+void PVRowsManager::removeAnnotations(const QList<Annotation*>& annotations) {
+    // One overflow row can hold every restriction site. Removing those one at a time is quadratic.
+    QHash<PVRowData*, QSet<Annotation*>> overflow;
+    QList<Annotation*> ordinary;
+    ordinary.reserve(annotations.size());
+    for (Annotation* annotation : annotations) {
+        PVRowData* row = rowByAnnotation.value(annotation, nullptr);
+        if (row == nullptr) {
+            continue;
+        }
+        if (row->acceptsOverlap) {
+            overflow[row].insert(annotation);
+            rowByAnnotation.remove(annotation);
+        } else {
+            ordinary.append(annotation);
+        }
+    }
+    for (auto it = overflow.cbegin(); it != overflow.cend(); ++it) {
+        PVRowData* row = it.key();
+        const QSet<Annotation*>& doomed = it.value();
+        QList<Annotation*> kept;
+        kept.reserve(qMax(0, row->annotations.size() - doomed.size()));
+        for (Annotation* annotation : qAsConst(row->annotations)) {
+            if (!doomed.contains(annotation)) {
+                kept.append(annotation);
+            }
+        }
+        row->annotations = kept;
+        row->ranges.clear();
+        if (row->annotations.isEmpty()) {
+            rows.removeOne(row);
+            delete row;
+        }
+    }
+    for (Annotation* annotation : ordinary) {
+        removeAnnotation(annotation);
     }
 }
 

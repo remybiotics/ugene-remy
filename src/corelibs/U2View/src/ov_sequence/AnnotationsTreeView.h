@@ -186,7 +186,11 @@ private:
     void adjustMenu(QMenu* m_) const;
     AVGroupItem* buildGroupTree(AVGroupItem* parentGroup, AnnotationGroup* g, bool areAnnotationsNew = true);
     AVAnnotationItem* buildAnnotationTree(AVGroupItem* parentGroup, Annotation* a, bool areAnnotationsNew = true);
+    AVAnnotationItem* ensureAnnotationItem(Annotation* annotation);
     void populateAnnotationQualifiers(AVAnnotationItem* ai);
+    void startLazyGroupFill(AnnotationGroup* group);
+    void fillLazyGroupChunk();
+    void cancelLazyGroupFill();
     void updateAllAnnotations(ATVAnnUpdateFlags flags);
     QMenu* getAutoAnnotationsHighligtingMenu(AnnotationTableObject* aObj);
 
@@ -243,6 +247,11 @@ private:
     QStringList qColumns;
     int lastClickedColumn;
     QTimer sortTimer;
+    AnnotationGroup* lazyFillGroup = nullptr;
+    QList<Annotation*> lazyFillAnnotations;
+    QList<AnnotationGroup*> lazyFillQueue;
+    int lazyFillIndex = 0;
+    bool lazyFillScheduled = false;
     QPoint dragStartPos;
     QMap<AVAnnotationItem*, QList<U2Region>> selectedAnnotation;
     // drag&drop related data
@@ -316,6 +325,8 @@ public:
 
     AnnotationGroup* group;
     AnnotationsTreeView* atv;
+    /** False while this group's annotation rows are created on expand instead of up front. */
+    bool annotationsMaterialized = true;
 };
 
 class U2VIEW_EXPORT AVAnnotationItem : public AVItem {
