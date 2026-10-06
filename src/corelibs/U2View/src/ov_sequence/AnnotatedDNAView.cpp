@@ -26,6 +26,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QScrollArea>
+#include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
 
@@ -342,11 +343,14 @@ AnnotatedDNAView::~AnnotatedDNAView() {
 
 bool AnnotatedDNAView::eventFilter(QObject* o, QEvent* e) {
     if (o == mainSplitter) {
-        if (panesLayoutPending && (e->type() == QEvent::Show || e->type() == QEvent::Resize) && mainSplitter->height() > 0) {
-            QWidget* fixedWidget = panesLayoutFixedWidget;
-            const int fixedHeight = panesLayoutFixedHeight;
+        // Opening a file adds the circular view before the MDI window is maximized. Follow those
+        // resizes until the settle timer, so the first sizes match a later circular-view toggle.
+        if ((panesLayoutPending || linearMapLayoutFollowResize) &&
+            (e->type() == QEvent::Show || e->type() == QEvent::Resize) &&
+            mainSplitter->height() > 0 &&
+            mainSplitter->height() != linearMapLayoutHeight) {
             panesLayoutPending = false;
-            layoutLinearMapAndAnnotations(fixedWidget, fixedHeight);
+            applyLinearMapAndAnnotationsLayout();
         }
         if (e->type() == QEvent::DragEnter || e->type() == QEvent::Drop) {
             QDropEvent* de = (QDropEvent*)e;
@@ -970,13 +974,52 @@ void AnnotatedDNAView::sl_onShowPosSelectorRequest() {
 
 void AnnotatedDNAView::layoutLinearMapAndAnnotations(QWidget* fixedWidget, int fixedHeight) {
     CHECK(mainSplitter != nullptr && scrollArea != nullptr && annotationsView != nullptr, );
+    panesLayoutFixedWidget = fixedWidget;
+    panesLayoutFixedHeight = fixedHeight;
+    // Keep following resizes until the window has finished opening. The circular view is created
+    // from the MDI "window added" signal, which runs before showMaximized().
+    linearMapLayoutFollowResize = true;
     if (mainSplitter->height() <= 0) {
         panesLayoutPending = true;
-        panesLayoutFixedWidget = fixedWidget;
-        panesLayoutFixedHeight = fixedHeight;
-        return;
+    } else {
+        panesLayoutPending = false;
+        applyLinearMapAndAnnotationsLayout();
     }
-    panesLayoutPending = false;
+    scheduleLinearMapLayoutSettle();
+}
+
+void AnnotatedDNAView::scheduleLinearMapLayoutSettle() {
+    const int generation = ++linearMapLayoutGeneration;
+    QTimer::singleShot(0, this, [this, generation]() {
+        if (generation != linearMapLayoutGeneration || mainSplitter == nullptr) {
+            return;
+        }
+        if (mainSplitter->height() > 0 && mainSplitter->height() != linearMapLayoutHeight) {
+            panesLayoutPending = false;
+            applyLinearMapAndAnnotationsLayout();
+        }
+        // A maximize resize can be posted after this turn. Apply once more, then stop following.
+        QTimer::singleShot(0, this, [this, generation]() {
+            if (generation != linearMapLayoutGeneration || mainSplitter == nullptr) {
+                return;
+            }
+            if (mainSplitter->height() > 0 && mainSplitter->height() != linearMapLayoutHeight) {
+                panesLayoutPending = false;
+                applyLinearMapAndAnnotationsLayout();
+            }
+            if (generation == linearMapLayoutGeneration) {
+                linearMapLayoutFollowResize = false;
+            }
+        });
+    });
+}
+
+bool AnnotatedDNAView::applyLinearMapAndAnnotationsLayout() {
+    CHECK(mainSplitter != nullptr && scrollArea != nullptr && annotationsView != nullptr, false);
+    if (mainSplitter->height() <= 0) {
+        return false;
+    }
+    linearMapLayoutHeight = mainSplitter->height();
     applyingPaneLayout = true;
 
     const int totalHeight = mainSplitter->height();
@@ -990,7 +1033,7 @@ void AnnotatedDNAView::layoutLinearMapAndAnnotations(QWidget* fixedWidget, int f
     const int annotationsIndex = mainSplitter->indexOf(annotationsView);
     if (scrollIndex < 0 || annotationsIndex < 0) {
         applyingPaneLayout = false;
-        return;
+        return false;
     }
 
     int visibleCount = 0;
@@ -1006,8 +1049,8 @@ void AnnotatedDNAView::layoutLinearMapAndAnnotations(QWidget* fixedWidget, int f
             continue;
         }
         int height = sizes.value(i);
-        if (widget == fixedWidget && fixedHeight >= 0) {
-            height = fixedHeight;
+        if (widget == panesLayoutFixedWidget && panesLayoutFixedHeight >= 0) {
+            height = panesLayoutFixedHeight;
         }
         if (height <= 0) {
             height = qMax(widget->sizeHint().height(), widget->minimumSizeHint().height());
@@ -1081,6 +1124,17 @@ void AnnotatedDNAView::layoutLinearMapAndAnnotations(QWidget* fixedWidget, int f
 
     sizes[scrollIndex] = chromeSum + panHeightBudget + sequenceTotal + frame;
     sizes[annotationsIndex] = annotationsHeight;
+    // Extra height from a later resize stays with the annotations and the sequence view.
+    // The circular map keeps the height just assigned.
+    for (int i = 0; i < widgetCount; ++i) {
+        int stretch = 0;
+        if (i == annotationsIndex) {
+            stretch = 3;
+        } else if (i == scrollIndex && sequenceCount > 0) {
+            stretch = 2;
+        }
+        mainSplitter->setStretchFactor(i, stretch);
+    }
     mainSplitter->setSizes(sizes);
 
     const double panScale = panWanted > 0 ? double(panHeightBudget) / double(panWanted) : 1.0;
@@ -1112,8 +1166,17 @@ void AnnotatedDNAView::layoutLinearMapAndAnnotations(QWidget* fixedWidget, int f
         budget.widget->applySequencePaneHeights(panHeight, sequenceHeight);
     }
 
+    bool expandableSequence = false;
+    foreach (const ADVSequenceWidget* sequenceWidget, getSequenceWidgets()) {
+        if (sequenceWidget->maximumHeight() == QWIDGETSIZE_MAX) {
+            expandableSequence = true;
+            break;
+        }
+    }
+    hadExpandableSequenceWidgetsLastResize = expandableSequence;
     savedMainSplitterSizes = mainSplitter->sizes();
     applyingPaneLayout = false;
+    return true;
 }
 
 void AnnotatedDNAView::insertWidgetIntoSplitter(ADVSplitWidget* splitWidget) {

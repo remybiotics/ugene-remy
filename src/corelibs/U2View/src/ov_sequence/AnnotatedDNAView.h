@@ -112,6 +112,7 @@ public:
      * Annotations then receive 60% of the remaining splitter height, and the sequence view receives the rest.
      * fixedWidget, when set, is kept at fixedHeight instead of its current size. Other panes outside the
      * sequence and annotations keep their current heights.
+     * The split is applied again once, after the view window finishes opening, so the first show matches a later toggle.
      */
     void layoutLinearMapAndAnnotations(QWidget* fixedWidget = nullptr, int fixedHeight = -1);
 
@@ -243,6 +244,10 @@ private slots:
 private:
     void updateScrollAreaHeight();
     void updateMultiViewActions();
+    /** Applies the current linear-map / annotations / sequence split. Returns false when the splitter has no height yet. */
+    bool applyLinearMapAndAnnotationsLayout();
+    /** Drops the follow-resize flag after the open/maximize resizes have been seen. */
+    void scheduleLinearMapLayoutSettle();
 
     void addRelatedAnnotations(ADVSequenceObjectContext* seqCtx);
     void addAutoAnnotations(ADVSequenceObjectContext* seqCtx);
@@ -320,6 +325,10 @@ private:
 
     bool applyingPaneLayout = false;
     bool panesLayoutPending = false;
+    /** While set, a main-splitter resize reapplies the pane split. Cleared once the window has settled. */
+    bool linearMapLayoutFollowResize = false;
+    int linearMapLayoutGeneration = 0;
+    int linearMapLayoutHeight = -1;
     QPointer<QWidget> panesLayoutFixedWidget;
     int panesLayoutFixedHeight = -1;
 };
