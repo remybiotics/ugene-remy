@@ -202,6 +202,9 @@ public:
 
     PanViewRenderArea* getRenderArea() const;
 
+    /** Widget height that shows every annotation row without a vertical scrollbar. */
+    int getHeightFittingAllRows() const;
+
 private:
     U2Region getRegionToZoom() const;
 

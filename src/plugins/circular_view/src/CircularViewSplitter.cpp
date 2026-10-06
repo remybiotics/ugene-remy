@@ -241,49 +241,9 @@ void CircularViewSplitter::sl_horSliderMoved(int newVal) {
 }
 
 void CircularViewSplitter::adaptSize() {
-    QWidget* widget = parentWidget();
-
-    Q_ASSERT(widget != nullptr);
-    auto parentSplitter = qobject_cast<QSplitter*>(widget);
-
-    int index = parentSplitter->indexOf(this);
-    QList<int> sizes = parentSplitter->sizes();
-
-    int splitterSize = 0;
-
-    int psH = parentSplitter->height();
-    int psW = parentSplitter->width();
-
-    if (parentSplitter->orientation() == Qt::Horizontal) {
-        splitterSize = psH;
-    } else {
-        splitterSize = psW;
-    }
-
-    if (!splitterSize) {
-        return;
-    }
-
-    int midSize = splitterSize;
-
-    if (splitterSize > CircularViewRenderArea::MIDDLE_ELLIPSE_SIZE) {
-        sizes[index] = CircularViewRenderArea::MIDDLE_ELLIPSE_SIZE;
-
-        midSize -= CircularViewRenderArea::MIDDLE_ELLIPSE_SIZE;
-        if (sizes.count() > 1) {
-            midSize /= (sizes.count() - 1);
-        }
-    } else {
-        midSize /= sizes.count();
-        sizes[index] = midSize;
-    }
-
-    for (int i = 0; i < sizes.count(); i++) {
-        if (i != index) {
-            sizes[i] = midSize;
-        }
-    }
-    parentSplitter->setSizes(sizes);
+    // The circular map keeps its usual height. The linear map, annotations, and sequence view
+    // are then sized by the sequence window: linear map fits its rows, annotations get 60% of the rest.
+    dnaView->layoutLinearMapAndAnnotations(this, CircularViewRenderArea::MIDDLE_ELLIPSE_SIZE);
 }
 
 void CircularViewSplitter::sl_updateZoomInAction(bool disabled) {

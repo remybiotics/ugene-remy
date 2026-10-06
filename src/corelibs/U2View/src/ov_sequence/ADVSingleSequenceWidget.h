@@ -136,6 +136,22 @@ public:
 
     void setNumBasesVisible(qint64 n) override;
 
+    /**
+     * Heights inside this sequence widget, excluding the sequence (details) view.
+     * chromeHeight includes the header, overview, other line views, and splitter handles.
+     * panHeight is the linear-map height that fits every annotation row.
+     */
+    struct SequencePaneHeights {
+        int chromeHeight = 0;
+        int panHeight = 0;
+        bool sequenceVisible = false;
+    };
+
+    SequencePaneHeights measureSequencePanes() const;
+
+    /** Applies a linear-map height and a sequence-view height. Other panes keep the measured chrome height. */
+    void applySequencePaneHeights(int panHeight, int sequenceHeight);
+
     QAction* getSelectRangeAction() const {
         return selectRangeAction1;
     }

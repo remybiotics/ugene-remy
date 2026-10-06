@@ -255,6 +255,15 @@ void PanView::updateRows() {
     updateActions();
 }
 
+int PanView::getHeightFittingAllRows() const {
+    const int lineHeight = qMax(1, getRenderArea()->getRowLineHeight());
+    const int lineCount = qMax(1, rowsManager->getRowCount() + settings->getAdditionalLines());
+    // Two spare pixels keep a border or rounding error from clipping the last row and enabling the row scrollbar.
+    const int rowsHeight = lineCount * lineHeight + 2;
+    const int horizontalScrollHeight = qMax(scrollBar->sizeHint().height(), scrollBar->minimumSizeHint().height());
+    return rowsHeight + horizontalScrollHeight;
+}
+
 int PanView::calculateNumRowBarSteps() const {
     int visibleRows = settings->getNumVisibleRows();
     int numRows = rowsManager->getRowCount();

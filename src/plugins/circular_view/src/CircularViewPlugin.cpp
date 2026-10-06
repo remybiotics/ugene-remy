@@ -237,6 +237,7 @@ void CircularViewContext::removeCircularView(GObjectViewController* view) {
             viewResources.insert(view, resources);
             delete circularView;
             emit si_cvSplitterWasCreatedOrRemoved(nullptr, viewSettings.value(av));
+            av->layoutLinearMapAndAnnotations();
         }
     }
 }

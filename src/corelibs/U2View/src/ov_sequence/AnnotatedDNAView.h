@@ -107,6 +107,14 @@ public:
 
     void unregisterSplitWidget(ADVSplitWidget* widget);
 
+    /**
+     * Sizes the linear map to fit its rows without a vertical scrollbar.
+     * Annotations then receive 60% of the remaining splitter height, and the sequence view receives the rest.
+     * fixedWidget, when set, is kept at fixedHeight instead of its current size. Other panes outside the
+     * sequence and annotations keep their current heights.
+     */
+    void layoutLinearMapAndAnnotations(QWidget* fixedWidget = nullptr, int fixedHeight = -1);
+
     QString addObject(GObject* o) override;
 
     void saveWidgetState() override;
@@ -309,6 +317,11 @@ private:
     bool hadExpandableSequenceWidgetsLastResize;
     // Used to restore mainSplitter state on 'fixed sequences'-> 'expandable sequences' transition.
     QList<int> savedMainSplitterSizes;
+
+    bool applyingPaneLayout = false;
+    bool panesLayoutPending = false;
+    QPointer<QWidget> panesLayoutFixedWidget;
+    int panesLayoutFixedHeight = -1;
 };
 
 }  // namespace U2

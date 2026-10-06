@@ -342,6 +342,12 @@ AnnotatedDNAView::~AnnotatedDNAView() {
 
 bool AnnotatedDNAView::eventFilter(QObject* o, QEvent* e) {
     if (o == mainSplitter) {
+        if (panesLayoutPending && (e->type() == QEvent::Show || e->type() == QEvent::Resize) && mainSplitter->height() > 0) {
+            QWidget* fixedWidget = panesLayoutFixedWidget;
+            const int fixedHeight = panesLayoutFixedHeight;
+            panesLayoutPending = false;
+            layoutLinearMapAndAnnotations(fixedWidget, fixedHeight);
+        }
         if (e->type() == QEvent::DragEnter || e->type() == QEvent::Drop) {
             QDropEvent* de = (QDropEvent*)e;
             const QMimeData* md = de->mimeData();
@@ -373,7 +379,7 @@ bool AnnotatedDNAView::eventFilter(QObject* o, QEvent* e) {
             }
         }
         // try to restore mainSplitter state on sequence views fixed <-> expandable state transition. Usually this happens when user toggles sequence views.
-        if (e->type() == QEvent::Resize) {
+        if (e->type() == QEvent::Resize && !applyingPaneLayout) {
             bool hasExpandableSequenceWidgetsNow = false;  // expandable state: any of the sequence view widgets has unlimited height.
             foreach (const ADVSequenceWidget* w, getSequenceWidgets()) {
                 if (w->maximumHeight() == QWIDGETSIZE_MAX) {
@@ -960,6 +966,154 @@ void AnnotatedDNAView::sl_onShowPosSelectorRequest() {
     connect(ps, SIGNAL(si_positionChanged(int)), SLOT(sl_onPosChangeRequest(int)));
 
     dlg->exec();
+}
+
+void AnnotatedDNAView::layoutLinearMapAndAnnotations(QWidget* fixedWidget, int fixedHeight) {
+    CHECK(mainSplitter != nullptr && scrollArea != nullptr && annotationsView != nullptr, );
+    if (mainSplitter->height() <= 0) {
+        panesLayoutPending = true;
+        panesLayoutFixedWidget = fixedWidget;
+        panesLayoutFixedHeight = fixedHeight;
+        return;
+    }
+    panesLayoutPending = false;
+    applyingPaneLayout = true;
+
+    const int totalHeight = mainSplitter->height();
+    const int widgetCount = mainSplitter->count();
+    QList<int> sizes = mainSplitter->sizes();
+    if (sizes.size() != widgetCount) {
+        sizes = QList<int>(widgetCount, 0);
+    }
+
+    const int scrollIndex = mainSplitter->indexOf(scrollArea);
+    const int annotationsIndex = mainSplitter->indexOf(annotationsView);
+    if (scrollIndex < 0 || annotationsIndex < 0) {
+        applyingPaneLayout = false;
+        return;
+    }
+
+    int visibleCount = 0;
+    int preserved = 0;
+    for (int i = 0; i < widgetCount; ++i) {
+        QWidget* widget = mainSplitter->widget(i);
+        if (widget->isHidden()) {
+            sizes[i] = 0;
+            continue;
+        }
+        visibleCount++;
+        if (i == scrollIndex || i == annotationsIndex) {
+            continue;
+        }
+        int height = sizes.value(i);
+        if (widget == fixedWidget && fixedHeight >= 0) {
+            height = fixedHeight;
+        }
+        if (height <= 0) {
+            height = qMax(widget->sizeHint().height(), widget->minimumSizeHint().height());
+        }
+        height = qBound(0, height, totalHeight);
+        sizes[i] = height;
+        preserved += height;
+    }
+
+    const int handles = mainSplitter->handleWidth() * qMax(0, visibleCount - 1);
+    const int frame = scrollArea->frameWidth() * 2;
+
+    struct SequenceBudget {
+        ADVSingleSequenceWidget* widget = nullptr;
+        ADVSingleSequenceWidget::SequencePaneHeights panes;
+    };
+    QList<SequenceBudget> sequenceBudgets;
+    int chromeSum = 0;
+    int panWanted = 0;
+    int sequenceCount = 0;
+    int panWidgetCount = 0;
+    foreach (ADVSequenceWidget* view, seqViews) {
+        auto sequenceWidget = qobject_cast<ADVSingleSequenceWidget*>(view);
+        if (sequenceWidget == nullptr || sequenceWidget->isHidden()) {
+            continue;
+        }
+        SequenceBudget budget;
+        budget.widget = sequenceWidget;
+        budget.panes = sequenceWidget->measureSequencePanes();
+        chromeSum += budget.panes.chromeHeight;
+        panWanted += budget.panes.panHeight;
+        if (budget.panes.panHeight > 0) {
+            panWidgetCount++;
+        }
+        if (budget.panes.sequenceVisible) {
+            sequenceCount++;
+        }
+        sequenceBudgets.append(budget);
+    }
+
+    int available = totalHeight - handles - preserved - chromeSum - frame;
+    if (available < 0) {
+        available = 0;
+    }
+
+    // Keep a little of the window for annotations and the sequence before the linear map takes the rest.
+    const int annotationFloor = 80;
+    const int sequenceFloor = sequenceCount > 0 ? 48 : 0;
+    int panHeightBudget = panWanted;
+    if (panWanted + annotationFloor + sequenceFloor > available) {
+        panHeightBudget = qMax(0, available - annotationFloor - sequenceFloor);
+    }
+    const int remaining = available - panHeightBudget;
+
+    int annotationsHeight = remaining;
+    int sequenceTotal = 0;
+    if (sequenceCount > 0) {
+        annotationsHeight = qRound(remaining * 0.6);
+        sequenceTotal = remaining - annotationsHeight;
+        if (remaining >= annotationFloor + sequenceFloor) {
+            if (sequenceTotal < sequenceFloor) {
+                sequenceTotal = sequenceFloor;
+                annotationsHeight = remaining - sequenceTotal;
+            }
+            if (annotationsHeight < annotationFloor) {
+                annotationsHeight = annotationFloor;
+                sequenceTotal = remaining - annotationsHeight;
+            }
+        }
+    }
+
+    sizes[scrollIndex] = chromeSum + panHeightBudget + sequenceTotal + frame;
+    sizes[annotationsIndex] = annotationsHeight;
+    mainSplitter->setSizes(sizes);
+
+    const double panScale = panWanted > 0 ? double(panHeightBudget) / double(panWanted) : 1.0;
+    int panAssigned = 0;
+    int panSeen = 0;
+    int sequenceLeft = sequenceTotal;
+    int sequencesLeft = sequenceCount;
+    foreach (const SequenceBudget& budget, sequenceBudgets) {
+        int panHeight = 0;
+        if (budget.panes.panHeight > 0) {
+            panSeen++;
+            if (panSeen == panWidgetCount) {
+                panHeight = panHeightBudget - panAssigned;
+            } else {
+                panHeight = qRound(budget.panes.panHeight * panScale);
+                panAssigned += panHeight;
+            }
+        }
+        int sequenceHeight = 0;
+        if (budget.panes.sequenceVisible && sequencesLeft > 0) {
+            sequenceHeight = sequenceLeft / sequencesLeft;
+            sequenceLeft -= sequenceHeight;
+            sequencesLeft--;
+        }
+        const int layoutIndex = scrolledWidgetLayout->indexOf(budget.widget);
+        if (layoutIndex >= 0) {
+            scrolledWidgetLayout->setStretch(layoutIndex, qMax(1, budget.panes.chromeHeight + panHeight + sequenceHeight));
+        }
+        budget.widget->applySequencePaneHeights(panHeight, sequenceHeight);
+    }
+
+    savedMainSplitterSizes = mainSplitter->sizes();
+    applyingPaneLayout = false;
 }
 
 void AnnotatedDNAView::insertWidgetIntoSplitter(ADVSplitWidget* splitWidget) {

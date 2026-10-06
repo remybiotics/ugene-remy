@@ -416,6 +416,59 @@ void ADVSingleSequenceWidget::centerPosition(int pos, QWidget* skipView) {
     }
 }
 
+ADVSingleSequenceWidget::SequencePaneHeights ADVSingleSequenceWidget::measureSequencePanes() const {
+    SequencePaneHeights result;
+    int visibleCount = 0;
+    for (int i = 0; i < linesSplitter->count(); ++i) {
+        QWidget* widget = linesSplitter->widget(i);
+        if (widget->isHidden()) {
+            continue;
+        }
+        visibleCount++;
+        if (widget == panView) {
+            result.panHeight = panView->getHeightFittingAllRows();
+        } else if (widget == detView) {
+            result.sequenceVisible = true;
+        } else if (qobject_cast<GSequenceLineView*>(widget) == nullptr) {
+            result.chromeHeight += qMax(widget->sizeHint().height(), widget->minimumSizeHint().height());
+        } else {
+            const int hint = qMax(widget->sizeHint().height(), widget->minimumSizeHint().height());
+            result.chromeHeight += qMax(widget->height(), hint);
+        }
+    }
+    if (visibleCount > 1) {
+        result.chromeHeight += linesSplitter->handleWidth() * (visibleCount - 1);
+    }
+    return result;
+}
+
+void ADVSingleSequenceWidget::applySequencePaneHeights(int panHeight, int sequenceHeight) {
+    QList<int> sizes;
+    for (int i = 0; i < linesSplitter->count(); ++i) {
+        QWidget* widget = linesSplitter->widget(i);
+        if (widget->isHidden()) {
+            sizes.append(0);
+            linesSplitter->setStretchFactor(i, 0);
+            continue;
+        }
+        if (widget == panView) {
+            sizes.append(qMax(0, panHeight));
+            linesSplitter->setStretchFactor(i, 0);
+        } else if (widget == detView) {
+            sizes.append(qMax(0, sequenceHeight));
+            linesSplitter->setStretchFactor(i, 1);
+        } else if (qobject_cast<GSequenceLineView*>(widget) == nullptr) {
+            sizes.append(qMax(widget->sizeHint().height(), widget->minimumSizeHint().height()));
+            linesSplitter->setStretchFactor(i, 0);
+        } else {
+            const int hint = qMax(widget->sizeHint().height(), widget->minimumSizeHint().height());
+            sizes.append(qMax(widget->height(), hint));
+            linesSplitter->setStretchFactor(i, 0);
+        }
+    }
+    linesSplitter->setSizes(sizes);
+}
+
 void ADVSingleSequenceWidget::updateMinMaxHeight() {
     if (lineViews.size() == 1 && lineViews.first() == overview) {
         setMaximumHeight(ADV_HEADER_HEIGHT + lineViews.first()->minimumHeight());
