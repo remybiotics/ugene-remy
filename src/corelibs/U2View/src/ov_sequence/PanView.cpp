@@ -492,7 +492,9 @@ void PanView::mousePressEvent(QMouseEvent* me) {
     const bool shiftClick = me->button() == Qt::LeftButton && me->modifiers().testFlag(Qt::ShiftModifier) && !me->modifiers().testFlag(Qt::AltModifier);
     const QList<Annotation*> previouslySelected = shiftClick ? ctx->getAnnotationsSelection()->getAnnotations() : QList<Annotation*>();
 
+    ctx->setExpandActivatedAnnotationDetails(true);
     GSequenceLineViewAnnotated::mousePressEvent(me);
+    ctx->setExpandActivatedAnnotationDetails(false);
 
     if (!shiftClick || previouslySelected.isEmpty()) {
         return;

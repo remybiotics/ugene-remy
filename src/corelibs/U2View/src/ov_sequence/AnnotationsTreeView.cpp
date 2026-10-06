@@ -1669,8 +1669,18 @@ void AnnotationsTreeView::sl_annotationClicked(Annotation* annotation) {
 
     expandItemRecursevly(item->parent());
 
+    const bool showDetails = advctx->getExpandActivatedAnnotationDetails();
     annotationSelection->add(item->annotation);
     annotationClicked(item, sortedAnnotationSelections, item->annotation->getRegions().toList());
+    if (showDetails) {
+        showAnnotationDetailsAtTop(item);
+    }
+}
+
+void AnnotationsTreeView::showAnnotationDetailsAtTop(AVAnnotationItem* item) {
+    // expandItem populates qualifiers through sl_itemExpanded, then the row is placed at the top.
+    tree->expandItem(item);
+    tree->scrollToItem(item, QAbstractItemView::PositionAtTop);
 }
 
 // TODO: refactor this method

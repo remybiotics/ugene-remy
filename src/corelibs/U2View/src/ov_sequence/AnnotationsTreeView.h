@@ -175,6 +175,8 @@ private:
     void editQualifierItem(AVQualifierItem* qi);
     void editAnnotationItem(AVAnnotationItem* ai);
     void expandItemRecursevly(QTreeWidgetItem* item);
+    /** Expands an annotation's qualifiers and scrolls that row to the top of the annotations list. */
+    void showAnnotationDetailsAtTop(AVAnnotationItem* item);
     QMap<AVAnnotationItem*, QList<U2Region>> sortAnnotationSelection(QList<AnnotationTableObject*> annotationObjects);
 
     QString renameDialogHelper(AVItem* i, const QString& defText, const QString& title);

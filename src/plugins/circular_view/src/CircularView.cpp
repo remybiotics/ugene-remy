@@ -98,7 +98,9 @@ void CircularView::updateMinSize() {
 
 void CircularView::mousePressEvent(QMouseEvent* e) {
     visibleRange = U2Region(0, seqLen);
+    ctx->setExpandActivatedAnnotationDetails(true);
     GSequenceLineViewAnnotated::mousePressEvent(e);
+    ctx->setExpandActivatedAnnotationDetails(false);
     const QPoint renderAreaPoint = toRenderAreaPoint(e->pos());
     lastPressAngle = circularViewRenderArea->coordToAsin(renderAreaPoint);
     lastMoveAngle = lastPressAngle;

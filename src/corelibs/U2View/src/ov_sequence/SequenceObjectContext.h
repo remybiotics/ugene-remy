@@ -92,6 +92,14 @@ public:
      */
     void emitAnnotationActivated(Annotation* annotation, int regionIndex);
 
+    /** Circular and linear map clicks set this so the annotations list opens that annotation at the top. */
+    void setExpandActivatedAnnotationDetails(bool expand) {
+        expandActivatedAnnotationDetails = expand;
+    }
+    bool getExpandActivatedAnnotationDetails() const {
+        return expandActivatedAnnotationDetails;
+    }
+
     void emitAnnotationDoubleClicked(Annotation* annotation, int regionIndex);
     void emitClearSelectedAnnotationRegions();
 
@@ -166,6 +174,7 @@ protected:
     QSet<AnnotationTableObject*> autoAnnotations;
     bool clarifyAminoTT;
     bool rowChoosed;
+    bool expandActivatedAnnotationDetails = false;
 
     // Caches
     StatisticsCache<DNAStatistics> commonStatisticsCache;
