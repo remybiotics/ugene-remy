@@ -140,6 +140,8 @@ PanView::PanView(QWidget* p, SequenceObjectContext* ctx, const PanViewRenderArea
     rowsManager = new PVRowsManager();
     renderArea = renderFactory.createRenderArea(this);
     renderArea->setMouseTracking(true);
+    showToolTipsImmediately(this);
+    showToolTipsImmediately(renderArea);
 
     updateNumVisibleRows();
 

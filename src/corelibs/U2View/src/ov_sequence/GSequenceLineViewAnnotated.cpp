@@ -24,6 +24,7 @@
 #include <QApplication>
 #include <QMenu>
 #include <QPainterPath>
+#include <QProxyStyle>
 #include <QToolTip>
 
 #include <U2Core/AnnotationData.h>
@@ -43,6 +44,100 @@
 #include "ADVSequenceObjectContext.h"
 
 namespace U2 {
+
+namespace {
+
+/** Keeps every other style hint and makes annotation tooltips show without the usual pause. */
+class ImmediateToolTipStyle : public QProxyStyle {
+public:
+    int styleHint(StyleHint hint, const QStyleOption* option = nullptr, const QWidget* widget = nullptr, QStyleHintReturn* returnData = nullptr) const override {
+        if (hint == QStyle::SH_ToolTip_WakeUpDelay) {
+            return 0;
+        }
+        return QProxyStyle::styleHint(hint, option, widget, returnData);
+    }
+};
+
+/** A 1px neighborhood covers the stroked edge of an element the exact fill test misses. */
+QList<Annotation*> annotationsTouchingPoint(GSequenceLineViewAnnotated* view, const QPoint& point) {
+    const QPoint pads[] = {QPoint(0, 0), QPoint(1, 0), QPoint(-1, 0), QPoint(0, 1), QPoint(0, -1)};
+    for (const QPoint& pad : pads) {
+        const QList<Annotation*> found = view->findAnnotationsByCoord(point + pad);
+        if (!found.isEmpty()) {
+            return found;
+        }
+    }
+    return {};
+}
+
+}  // namespace
+
+void GSequenceLineViewAnnotated::showToolTipsImmediately(QWidget* widget) {
+    CHECK(widget != nullptr, );
+    auto style = new ImmediateToolTipStyle();
+    style->setParent(widget);
+    widget->setStyle(style);
+    // Hover moves arrive on the render area. Watch them here so the tip is not left to Qt's wake-up timer.
+    if (widget != this) {
+        widget->installEventFilter(this);
+    }
+}
+
+bool GSequenceLineViewAnnotated::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == renderArea) {
+        if (event->type() == QEvent::MouseMove) {
+            auto mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->buttons() == Qt::NoButton) {
+                showHoverToolTip(mouseEvent->pos(), mouseEvent->globalPosition().toPoint());
+            } else {
+                hoverToolTipAnnotations.clear();
+                hoverToolTipValid = false;
+            }
+        } else if (event->type() == QEvent::Leave) {
+            // The next hover must not draw a line through elements the pointer did not cross.
+            hoverToolTipValid = false;
+            hoverToolTipAnnotations.clear();
+        }
+    }
+    return GSequenceLineView::eventFilter(watched, event);
+}
+
+void GSequenceLineViewAnnotated::showHoverToolTip(const QPoint& renderAreaPoint, const QPoint& globalPos) {
+    QPoint hitPoint = renderAreaPoint;
+    QList<Annotation*> annotations = annotationsTouchingPoint(this, renderAreaPoint);
+    // A fast move can jump over a short element between two mouse events. Walk that gap.
+    if (annotations.isEmpty() && hoverToolTipValid) {
+        const int dx = renderAreaPoint.x() - hoverToolTipPoint.x();
+        const int dy = renderAreaPoint.y() - hoverToolTipPoint.y();
+        const int steps = qMax(qAbs(dx), qAbs(dy));
+        for (int i = 1; i <= steps; ++i) {
+            const QPoint sample(hoverToolTipPoint.x() + dx * i / steps, hoverToolTipPoint.y() + dy * i / steps);
+            const QList<Annotation*> crossed = findAnnotationsByCoord(sample);
+            if (!crossed.isEmpty()) {
+                annotations = crossed;
+                hitPoint = sample;
+            }
+        }
+    }
+    hoverToolTipPoint = renderAreaPoint;
+    hoverToolTipValid = true;
+
+    if (annotations.isEmpty()) {
+        if (!hoverToolTipAnnotations.isEmpty()) {
+            hoverToolTipAnnotations.clear();
+            QToolTip::hideText();
+        }
+        return;
+    }
+    if (annotations == hoverToolTipAnnotations) {
+        return;
+    }
+    hoverToolTipAnnotations = annotations;
+    const QString tip = createToolTip(hitPoint);
+    if (!tip.isEmpty()) {
+        QToolTip::showText(globalPos, tip, renderArea);
+    }
+}
 
 GSequenceLineViewAnnotated::GSequenceLineViewAnnotated(QWidget* p, SequenceObjectContext* ctx)
     : GSequenceLineView(p, ctx) {

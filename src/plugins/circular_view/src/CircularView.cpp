@@ -71,6 +71,8 @@ CircularView::CircularView(QWidget* p, ADVSequenceObjectContext* ctx, CircularVi
     circularViewRenderArea = new CircularViewRenderArea(this);
     renderArea = circularViewRenderArea;
     setMouseTracking(true);
+    showToolTipsImmediately(this);
+    showToolTipsImmediately(renderArea);
 
     connect(ctx->getSequenceGObject(), SIGNAL(si_nameChanged(const QString&)), this, SLOT(sl_onSequenceObjectRenamed(const QString&)));
     connect(ctx->getSequenceObject(), SIGNAL(si_sequenceCircularStateChanged()), this, SLOT(sl_onCircularTopologyChange()));

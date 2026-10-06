@@ -54,6 +54,8 @@ public:
 
     bool isAnnotationSelectionInVisibleRange() const;
 
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 protected:
     void mousePressEvent(QMouseEvent* e) override;
 
@@ -63,6 +65,12 @@ protected:
 
     /** Creates a tooltip for the given render area coordinate. */
     virtual QString createToolTip(const QPoint& renderAreaPoint);
+
+    /**
+     * Shows annotation tooltips as soon as the pointer enters an element.
+     * widget is this view or its render area.
+     */
+    void showToolTipsImmediately(QWidget* widget);
 
     virtual void registerAnnotations(const QList<Annotation*>& l);
 
@@ -101,6 +109,13 @@ private:
      * \return 0 The index of the closest annotation to the current position.
      **/
     static int getClosestAnnotationRegionToPointIndex(Annotation* ann, qint64 baseIndex);
+
+    /** Shows or hides the annotation tooltip for a hover, without waiting for the pointer to stop. */
+    void showHoverToolTip(const QPoint& renderAreaPoint, const QPoint& globalPos);
+
+    QList<Annotation*> hoverToolTipAnnotations;
+    QPoint hoverToolTipPoint;
+    bool hoverToolTipValid = false;
 
 protected:
     friend class ClearAnnotationsTask;
