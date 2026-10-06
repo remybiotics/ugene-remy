@@ -23,6 +23,8 @@
 
 #include <QTreeWidget>
 
+class QPushButton;
+
 namespace U2 {
 
 class Annotation;
@@ -69,15 +71,24 @@ private slots:
     void sl_onSequenceRemoved(ADVSequenceObjectContext* sequenceContext);
     void sl_onAnnotationObjectAdded(AnnotationTableObject* object);
     void sl_onAnnotationObjectRemoved(AnnotationTableObject* object);
+    void sl_maxHitsClicked();
+    void sl_showEmptyEnzymesToggled(bool showEmpty);
 
 private:
     void setSequenceContext(ADVSequenceObjectContext* sequenceContext);
     void unregisterAnnotationObjects();
     void connectAnnotationObject(AnnotationTableObject* object);
     void rebuildTree();
+    void updateEmptyEnzymeVisibility();
+    void initFooterButtons();
+    int selectedMaxHitCount() const;
     ADVSequenceObjectContext* ctx;
     AnnotatedDNAView* annotatedDnaView;
     QTreeWidget* treeWidget;
+    QPushButton* maxHits1Button = nullptr;
+    QPushButton* maxHits2Button = nullptr;
+    QPushButton* maxHitsAllButton = nullptr;
+    bool showEmptyEnzymes = true;
     EnzymeFolderItem* findEnzymeFolderByName(const QString& enzymeName);
     void registerAnnotationObjects();
     void updateTreeWidget();

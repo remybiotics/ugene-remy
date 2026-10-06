@@ -21,6 +21,11 @@
 
 #include "RestrictionMapWidget.h"
 
+#include <climits>
+
+#include <QButtonGroup>
+#include <QHBoxLayout>
+#include <QPushButton>
 #include <QSizePolicy>
 #include <QVBoxLayout>
 
@@ -41,9 +46,17 @@
 
 #include <U2View/ADVSequenceObjectContext.h>
 #include <U2View/AnnotatedDNAView.h>
+#include <U2View/AutoAnnotationUtils.h>
 
 #define ENZYME_FOLDER_ITEM_TYPE 1022
 #define ENZYME_ITEM_TYPE 1023
+
+namespace {
+
+const char* SHOW_EMPTY_ENZYMES_KEY = "circular_view/restriction_map_show_empty_enzymes";
+const int UNLIMITED_HIT_COUNT = INT_MAX;
+
+}  // namespace
 
 namespace U2 {
 
@@ -108,6 +121,7 @@ RestrctionMapWidget::RestrctionMapWidget(ADVSequenceObjectContext* context, QWid
     connect(treeWidget, SIGNAL(itemSelectionChanged()), SLOT(sl_itemSelectionChanged()));
 
     layout->addWidget(treeWidget, 1);
+    initFooterButtons();
 
     connect(annotatedDnaView, SIGNAL(si_activeSequenceWidgetChanged(ADVSequenceWidget*, ADVSequenceWidget*)), SLOT(sl_onActiveSequenceChanged()));
     connect(annotatedDnaView, SIGNAL(si_sequenceRemoved(ADVSequenceObjectContext*)), SLOT(sl_onSequenceRemoved(ADVSequenceObjectContext*)));
@@ -153,6 +167,104 @@ void RestrctionMapWidget::rebuildTree() {
     updateTreeWidget();
     initTreeWidget();
     treeWidget->blockSignals(false);
+    updateEmptyEnzymeVisibility();
+}
+
+void RestrctionMapWidget::initFooterButtons() {
+    // GroupOptionsWidget moves this child onto the row beside the Help button.
+    auto footer = new QWidget(this);
+    footer->setObjectName("optionsPanelFooter");
+    auto footerLayout = new QHBoxLayout(footer);
+    footerLayout->setContentsMargins(0, 0, 0, 0);
+    footerLayout->setSpacing(4);
+
+    auto hitGroup = new QButtonGroup(footer);
+    hitGroup->setExclusive(true);
+    const auto addHitButton = [&](const QString& text, const QString& objectName, const QString& toolTip) {
+        auto button = new QPushButton(text, footer);
+        button->setObjectName(objectName);
+        button->setToolTip(toolTip);
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        hitGroup->addButton(button);
+        footerLayout->addWidget(button);
+        connect(button, &QPushButton::clicked, this, &RestrctionMapWidget::sl_maxHitsClicked);
+        return button;
+    };
+    maxHits1Button = addHitButton(tr("1"), "restrictionMapHits1Button", tr("Find restriction sites with a maximum of 1 hit"));
+    maxHits2Button = addHitButton(tr("2"), "restrictionMapHits2Button", tr("Find restriction sites with a maximum of 2 hits"));
+    maxHitsAllButton = addHitButton(tr("All"), "restrictionMapHitsAllButton", tr("Find restriction sites with no maximum hit count"));
+
+    Settings* settings = AppContext::getSettings();
+    const bool limitHits = settings->getValue(EnzymeSettings::ENABLE_HIT_COUNT, false).toBool();
+    const int maxHits = settings->getValue(EnzymeSettings::MAX_HIT_VALUE, UNLIMITED_HIT_COUNT).toInt();
+    if (limitHits && maxHits == 1) {
+        maxHits1Button->setChecked(true);
+    } else if (limitHits && maxHits == 2) {
+        maxHits2Button->setChecked(true);
+    } else if (!limitHits || maxHits >= UNLIMITED_HIT_COUNT) {
+        maxHitsAllButton->setChecked(true);
+    }
+
+    footerLayout->addSpacing(8);
+    auto showEmptyButton = new QPushButton(tr("Empty"), footer);
+    showEmptyButton->setObjectName("restrictionMapShowEmptyButton");
+    showEmptyButton->setToolTip(tr("Show enzymes with no sites. They stay in the list and are grayed out."));
+    showEmptyButton->setCheckable(true);
+    showEmptyButton->setFocusPolicy(Qt::NoFocus);
+    showEmptyEnzymes = settings->getValue(SHOW_EMPTY_ENZYMES_KEY, true).toBool();
+    showEmptyButton->setChecked(showEmptyEnzymes);
+    connect(showEmptyButton, &QPushButton::toggled, this, &RestrctionMapWidget::sl_showEmptyEnzymesToggled);
+    footerLayout->addWidget(showEmptyButton);
+}
+
+int RestrctionMapWidget::selectedMaxHitCount() const {
+    if (maxHits1Button != nullptr && maxHits1Button->isChecked()) {
+        return 1;
+    }
+    if (maxHits2Button != nullptr && maxHits2Button->isChecked()) {
+        return 2;
+    }
+    return UNLIMITED_HIT_COUNT;
+}
+
+void RestrctionMapWidget::sl_maxHitsClicked() {
+    const int maxHits = selectedMaxHitCount();
+    const bool limitHits = maxHits != UNLIMITED_HIT_COUNT;
+    Settings* settings = AppContext::getSettings();
+    settings->setValue(EnzymeSettings::ENABLE_HIT_COUNT, limitHits);
+    settings->setValue(EnzymeSettings::MIN_HIT_VALUE, 1);
+    settings->setValue(EnzymeSettings::MAX_HIT_VALUE, maxHits);
+    if (ctx != nullptr) {
+        AutoAnnotationUtils::triggerAutoAnnotationsUpdate(ctx, ANNOTATION_GROUP_ENZYME);
+    }
+}
+
+void RestrctionMapWidget::sl_showEmptyEnzymesToggled(bool showEmpty) {
+    showEmptyEnzymes = showEmpty;
+    AppContext::getSettings()->setValue(SHOW_EMPTY_ENZYMES_KEY, showEmpty);
+    updateEmptyEnzymeVisibility();
+}
+
+void RestrctionMapWidget::updateEmptyEnzymeVisibility() {
+    const QColor emptyText = treeWidget->palette().color(QPalette::Disabled, QPalette::Text);
+    const int count = treeWidget->topLevelItemCount();
+    for (int i = 0; i < count; ++i) {
+        auto item = static_cast<EnzymeFolderItem*>(treeWidget->topLevelItem(i));
+        const bool empty = item->childCount() == 0;
+        const bool hide = empty && !showEmptyEnzymes;
+        item->setHidden(hide);
+        if (hide && item->isSelected()) {
+            item->setSelected(false);
+        }
+        // An explicit color sticks through selection, so only empty rows get the disabled gray.
+        if (empty) {
+            item->setForeground(0, emptyText);
+        } else {
+            item->setData(0, Qt::ForegroundRole, QVariant());
+        }
+    }
 }
 
 void RestrctionMapWidget::sl_onActiveSequenceChanged() {
@@ -215,6 +327,7 @@ void RestrctionMapWidget::updateTreeWidget() {
     }
     treeWidget->insertTopLevelItems(0, items);
     treeWidget->sortItems(0, Qt::AscendingOrder);
+    updateEmptyEnzymeVisibility();
 }
 
 void RestrctionMapWidget::registerAnnotationObjects() {
@@ -236,6 +349,7 @@ void RestrctionMapWidget::sl_onAnnotationsAdded(const QList<Annotation*>& anns) 
     // TODO: enable "intelligent" sorting by reimplementing custom AbstractModel
     //  Take into account number of items in each enzymes folder
     treeWidget->sortItems(0, Qt::AscendingOrder);
+    updateEmptyEnzymeVisibility();
 }
 
 void RestrctionMapWidget::sl_onAnnotationsRemoved(const QList<Annotation*>& anns) {
@@ -250,6 +364,7 @@ void RestrctionMapWidget::sl_onAnnotationsRemoved(const QList<Annotation*>& anns
             folderItem->removeEnzymeItem(a);
         }
     }
+    updateEmptyEnzymeVisibility();
 }
 
 EnzymeFolderItem* RestrctionMapWidget::findEnzymeFolderByName(const QString& enzymeName) {
@@ -327,6 +442,7 @@ void RestrctionMapWidget::sl_onAnnotationsInGroupRemoved(const QList<Annotation*
                 folderItem->removeEnzymeItem(a);
             }
         }
+        updateEmptyEnzymeVisibility();
     }
 }
 

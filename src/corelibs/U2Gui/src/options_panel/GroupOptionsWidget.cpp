@@ -66,9 +66,17 @@ GroupOptionsWidget::GroupOptionsWidget(const QString& _groupId, const QString& _
     helpButton->setMaximumWidth(60);
     new HelpButton(this, helpButton, documentationPage);
 
+    // A content widget can leave a direct child named optionsPanelFooter to sit in the empty space beside Help.
+    QWidget* footer = mainWidget == nullptr ? nullptr : mainWidget->findChild<QWidget*>("optionsPanelFooter", Qt::FindDirectChildrenOnly);
+
     auto helpLayout = new QHBoxLayout();
-    helpLayout->addWidget(helpButton, 0, Qt::AlignRight);
-    helpLayout->setContentsMargins(0, 0, 10, 0);
+    helpLayout->setContentsMargins(footer == nullptr ? 0 : 10, 0, 10, 0);
+    helpLayout->setSpacing(6);
+    if (footer != nullptr) {
+        helpLayout->addWidget(footer, 0, Qt::AlignVCenter);
+    }
+    helpLayout->addStretch(1);
+    helpLayout->addWidget(helpButton, 0, Qt::AlignRight | Qt::AlignVCenter);
 
     mainLayout->addLayout(helpLayout);
     mainLayout->setAlignment(helpLayout, Qt::AlignBottom);
